@@ -285,18 +285,6 @@ export default function SubmitContract() {
           </div>
         </Card>
 
-        <Card className="border-slate-200 shadow-sm bg-white p-6" style={{display:'none'}}>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-heading font-bold text-slate-900">Draft PKS (.docx)</h3>
-            {autofilling && <span className="text-xs text-teal-700 font-semibold inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Mengekstrak metadata...</span>}
-          </div>
-          <div
-            data-testid="dropzone-legacy"
-            onDragOver={(e)=>{e.preventDefault();}}
-            className={`rounded-xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors border-slate-300`}
-          />
-        </Card>
-
         <div className="flex justify-end gap-3">
           <Button type="button" variant="outline" onClick={()=>nav("/")}>Batal</Button>
           <Button type="submit" data-testid="submit-contract" disabled={submitting} className="bg-teal-700 hover:bg-teal-800 font-semibold">
