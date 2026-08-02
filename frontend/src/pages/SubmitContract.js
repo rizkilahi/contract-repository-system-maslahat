@@ -7,18 +7,22 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import LegalGuidelinesModal from "@/components/LegalGuidelinesModal";
-import { Info, UploadCloud, FileCheck, Loader2, ArrowLeft } from "lucide-react";
+import { Info, UploadCloud, FileCheck, Loader2, ArrowLeft, Sparkles } from "lucide-react";
+import mammoth from "mammoth/mammoth.browser";
 
 export default function SubmitContract() {
   const nav = useNavigate();
   const [meta, setMeta] = useState({ institution_types: [], owning_bus: [] });
   const [form, setForm] = useState({
+    reference_number: "",
     partner_name: "", partner_pic_name: "", partner_pic_phone: "", partner_pic_email: "",
     institution_type: "", agreement_title: "", contract_value: 0,
     effective_date: "", expiry_date: "", owning_bu: "", bu_pic_name: "", remarks: ""
   });
+  const [autoFilled, setAutoFilled] = useState(new Set());
   const [file, setFile] = useState(null);
   const [drag, setDrag] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -28,32 +32,115 @@ export default function SubmitContract() {
 
   useEffect(() => { api.get("/meta/options").then(r => setMeta(r.data)); }, []);
 
-  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  const set = (k, v) => {
+    setForm(prev => ({ ...prev, [k]: v }));
+    // User edited: remove the "auto-filled" badge so they know it's now their own value
+    if (autoFilled.has(k)) {
+      const next = new Set(autoFilled);
+      next.delete(k);
+      setAutoFilled(next);
+    }
+  };
 
   const handleFile = async (f) => {
     if (!f) return;
     if (!f.name.toLowerCase().endsWith(".docx")) { toast.error("Hanya file .docx yang diperbolehkan"); return; }
     setFile(f);
-    // Auto-fill metadata
     setAutofilling(true);
     try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const { data } = await api.post("/contracts/extract-docx", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const buf = await f.arrayBuffer();
+      const { value: raw } = await mammoth.extractRawText({ arrayBuffer: buf });
+
+      // Normalize whitespace but keep line-breaks for section detection
+      const norm = raw
+        .replace(/\r/g, "")
+        .split("\n")
+        .map(l => l.replace(/[ \t]+/g, " ").trim())
+        .filter(Boolean)
+        .join("\n");
+      const oneLine = norm.replace(/\n/g, " ");
+
+      const extracted = {};
+      const missing = [];
+
+      // 1) Contract ID — after "BSI Maslahat: No. "
+      const mCid = oneLine.match(/BSI\s*Maslahat\s*:\s*No\s*\.?\s+([^\n]+?)(?=\s+Nama\s+Mitra|\s{2,}Pada\s+hari|\s{2,}|$)/i);
+      if (mCid) extracted.reference_number = mCid[1].replace(/\s+/g, " ").trim();
+      else missing.push("Contract ID");
+
+      // 2) Agreement Title — after "Tentang"
+      const mTitle = norm.match(/\bTentang\s+([^\n]+)/i);
+      if (mTitle) extracted.agreement_title = mTitle[1].trim();
+      else missing.push("Judul PKS");
+
+      // 3) Partner Name — after "2." and before ", yang beralamat di"
+      // Tolerates the docx template's "(NAMA LEMBAGA) , yang beralamat di" shape too.
+      let mPart = oneLine.match(/(?:^|\n|\s)2\s*\.\s*([^,\n]+?)\s*,\s*yang\s+beralamat\s+di/i);
+      if (!mPart) mPart = oneLine.match(/\(?\s*([A-Z][A-Z0-9 &\.\-\(\)\/]{2,140}?)\s*\)?\s*,\s*yang\s+beralamat\s+di/i);
+      if (mPart) extracted.partner_name = mPart[1].replace(/[()]/g, "").replace(/\s+/g, " ").trim();
+      else missing.push("Nama Mitra");
+
+      // 4) Contract Value — after "memiliki nilai kerja sama sebesar "
+      const mVal = oneLine.match(/memiliki\s+nilai\s+kerja\s+sama\s+sebesar\s+([^\n\.]+?)(?=\s+dan\b|\s+atau\b|\.\s|\n|$)/i);
+      if (mVal) {
+        const rawVal = mVal[1].trim();
+        const numMatch = rawVal.match(/Rp\.?\s*([\d\.,]+)/i) || rawVal.match(/([\d][\d\.,]{2,})/);
+        if (numMatch) {
+          const num = numMatch[1].replace(/\./g, "").replace(/,/g, "");
+          const parsed = parseInt(num, 10);
+          if (!Number.isNaN(parsed)) extracted.contract_value = parsed;
+        }
+        if (!extracted.contract_value) missing.push("Nilai Kerja Sama");
+      } else missing.push("Nilai Kerja Sama");
+
+      // 5) Effective Date — after "dimulai efektif sejak tanggal "
+      const mEff = oneLine.match(/dimulai\s+efektif\s+sejak\s+tanggal\s+([^\n\.]+?)(?=\s+dan\b|\s+atau\b|\.\s|\n|$)/i);
+      if (mEff) {
+        const rawDate = mEff[1].trim();
+        const iso = parseIndoDate(rawDate);
+        if (iso) extracted.effective_date = iso;
+        else missing.push("Tgl Efektif (format tanggal tidak dikenali)");
+      } else missing.push("Tgl Efektif");
+
+      // 6) Partner PIC — "PIC :" under the "Mitra/Pihak Eksternal" section
+      const sectionRx = /Mit\s*r?\s*a\s*\/?\s*Pihak\s+Eks?\s*t?\s*ernal/gi;
+      let lastIdx = -1; let sm;
+      while ((sm = sectionRx.exec(norm)) !== null) lastIdx = sm.index;
+      if (lastIdx >= 0) {
+        const sub = norm.slice(lastIdx);
+        const pic = sub.match(/PIC\s*:\s*([^\n]+)/i);
+        if (pic && pic[1].trim().length > 0 && !/^_+$/.test(pic[1].trim())) {
+          extracted.partner_pic_name = pic[1].trim();
+        } else missing.push("Nama PIC Mitra");
+      } else missing.push("Nama PIC Mitra");
+
+      // Apply to form — only overwrite empty fields; user may edit anytime.
       const filled = [];
       setForm(prev => {
         const next = { ...prev };
-        if (data.agreement_title && !prev.agreement_title) { next.agreement_title = data.agreement_title; filled.push("Judul PKS"); }
-        if (data.partner_name && !prev.partner_name) { next.partner_name = data.partner_name; filled.push("Nama Mitra"); }
-        if (data.effective_date && !prev.effective_date) { next.effective_date = data.effective_date; filled.push("Tgl Efektif"); }
-        if (data.expiry_date && !prev.expiry_date) { next.expiry_date = data.expiry_date; filled.push("Tgl Berakhir"); }
-        if (data.contract_value && !prev.contract_value) { next.contract_value = data.contract_value; filled.push("Nilai"); }
+        Object.entries(extracted).forEach(([k, v]) => {
+          const cur = prev[k];
+          const isEmpty = cur === "" || cur === 0 || cur == null;
+          if (isEmpty) {
+            next[k] = v;
+            filled.push(k);
+          }
+        });
         return next;
       });
-      if (filled.length > 0) toast.success(`Auto-fill: ${filled.join(", ")}`);
-      else toast.message("Tidak ada metadata yang bisa diekstrak otomatis dari file ini");
+      setAutoFilled(new Set(filled));
+
+      if (filled.length > 0) {
+        toast.success(`Auto-fill dari .docx berhasil (${filled.length} field terisi)`);
+      }
+      if (missing.length > 0) {
+        toast.message("Beberapa data tidak ditemukan, silakan isi manual.", {
+          description: `Tidak ditemukan: ${missing.join(", ")}`,
+        });
+      }
     } catch (e) {
-      toast.error("Gagal mengekstrak metadata: " + formatApiError(e?.response?.data?.detail));
+      console.error(e);
+      toast.error("Gagal memproses .docx: " + (e?.message || "unknown"));
     } finally { setAutofilling(false); }
   };
 
@@ -102,7 +189,11 @@ export default function SubmitContract() {
         <Card className="border-slate-200 shadow-sm bg-white p-6">
           <h3 className="font-heading font-bold text-slate-900 mb-4">Informasi Mitra</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Nama Mitra" required>
+            <Field label="Nomor Referensi PKS (dari draft)" className="md:col-span-2" autoFilled={autoFilled.has("reference_number")}>
+              <Input data-testid="f-ref-number" placeholder="Terisi otomatis dari draft, atau isi manual (contoh: 03/xxx/PKS/BSI MASLAHAT)"
+                value={form.reference_number} onChange={(e)=>set("reference_number", e.target.value)} />
+            </Field>
+            <Field label="Nama Mitra" required autoFilled={autoFilled.has("partner_name")}>
               <Input data-testid="f-partner-name" required value={form.partner_name} onChange={(e)=>set("partner_name", e.target.value)} />
             </Field>
             <Field label="Jenis Institusi" required
@@ -116,7 +207,7 @@ export default function SubmitContract() {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Nama PIC Mitra" required>
+            <Field label="Nama PIC Mitra" required autoFilled={autoFilled.has("partner_pic_name")}>
               <Input data-testid="f-pic-name" required value={form.partner_pic_name} onChange={(e)=>set("partner_pic_name", e.target.value)} />
             </Field>
             <Field label="No. Telepon PIC Mitra" required>
@@ -131,10 +222,10 @@ export default function SubmitContract() {
         <Card className="border-slate-200 shadow-sm bg-white p-6">
           <h3 className="font-heading font-bold text-slate-900 mb-4">Detail Kerja Sama</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Judul PKS" required className="md:col-span-2">
+            <Field label="Judul PKS" required className="md:col-span-2" autoFilled={autoFilled.has("agreement_title")}>
               <Input data-testid="f-title" required value={form.agreement_title} onChange={(e)=>set("agreement_title", e.target.value)} />
             </Field>
-            <Field label="Nilai Kerja Sama (IDR)">
+            <Field label="Nilai Kerja Sama (IDR)" autoFilled={autoFilled.has("contract_value")}>
               <Input data-testid="f-value" type="number" min="0" value={form.contract_value} onChange={(e)=>set("contract_value", e.target.value)} />
             </Field>
             <Field label="Owning BU" required>
@@ -145,7 +236,7 @@ export default function SubmitContract() {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Tanggal Efektif" required>
+            <Field label="Tanggal Efektif" required autoFilled={autoFilled.has("effective_date")}>
               <Input data-testid="f-effective" required type="date" value={form.effective_date} onChange={(e)=>set("effective_date", e.target.value)} />
             </Field>
             <Field label="Tanggal Berakhir" required>
@@ -205,14 +296,43 @@ export default function SubmitContract() {
   );
 }
 
-function Field({ label, required, children, className = "", action }) {
+function Field({ label, required, children, className = "", action, autoFilled }) {
   return (
     <div className={`space-y-1.5 ${className}`}>
       <div className="flex items-center justify-between">
-        <Label className="text-xs font-semibold text-slate-700">{label}{required && <span className="text-rose-500 ml-1">*</span>}</Label>
+        <Label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+          {label}{required && <span className="text-rose-500 ml-0.5">*</span>}
+          {autoFilled && (
+            <Badge className="bg-amber-100 text-amber-800 border-0 text-[9px] font-semibold uppercase tracking-wider ml-1 gap-1">
+              <Sparkles className="h-2.5 w-2.5" /> Auto
+            </Badge>
+          )}
+        </Label>
         {action}
       </div>
       {children}
     </div>
   );
+}
+
+// Parse Indonesian date formats (DD/MM/YYYY, DD Monthname YYYY) to ISO YYYY-MM-DD
+function parseIndoDate(s) {
+  if (!s) return null;
+  const txt = String(s).trim();
+  const months = {
+    januari: 1, februari: 2, maret: 3, april: 4, mei: 5, juni: 6,
+    juli: 7, agustus: 8, september: 9, oktober: 10, november: 11, desember: 12,
+    jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, agu: 8, sep: 9, okt: 10, nov: 11, des: 12,
+  };
+  let m = txt.match(/(\d{1,2})[\-\/](\d{1,2})[\-\/](\d{2,4})/);
+  if (m) {
+    let y = parseInt(m[3], 10); if (y < 100) y += 2000;
+    return `${y}-${String(parseInt(m[2],10)).padStart(2,"0")}-${String(parseInt(m[1],10)).padStart(2,"0")}`;
+  }
+  m = txt.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+  if (m) {
+    const mo = months[m[2].toLowerCase()];
+    if (mo) return `${m[3]}-${String(mo).padStart(2,"0")}-${String(parseInt(m[1],10)).padStart(2,"0")}`;
+  }
+  return null;
 }

@@ -219,6 +219,7 @@ class ContractIn(BaseModel):
     expiry_date: str
     owning_bu: str
     bu_pic_name: str
+    reference_number: Optional[str] = None
     remarks: Optional[str] = ""
 
 class StatusUpdate(BaseModel):
