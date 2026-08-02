@@ -15,7 +15,14 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (r) => r,
+  (r) => {
+    // Sliding-session token refresh (backend sets X-New-Token when < 5 min left)
+    const newTok = r.headers?.["x-new-token"] || r.headers?.["X-New-Token"];
+    if (newTok) {
+      localStorage.setItem("crs_token", newTok);
+    }
+    return r;
+  },
   (e) => {
     if (e?.response?.status === 401) {
       localStorage.removeItem("crs_token");

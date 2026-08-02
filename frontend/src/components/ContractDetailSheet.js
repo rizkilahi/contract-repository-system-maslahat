@@ -20,16 +20,16 @@ const fmtDT = (s) => s ? new Date(s).toLocaleString("id-ID", { day: "2-digit", m
 const fmtIDR = (n) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n || 0);
 
 const NEXT_STATUS = {
-  drafting: [{ v: "under_legal_review", label: "Kirim untuk Legal Review", role: ["business_unit","admin"], icon: ArrowRight }],
+  drafting: [{ v: "under_legal_review", label: "Kirim untuk Legal Review", role: ["business_unit"], icon: ArrowRight }],
   under_legal_review: [
-    { v: "revision_required", label: "Minta Revisi", role: ["legal_officer","admin"], icon: XCircle, variant: "warn" },
-    { v: "ready_for_signature", label: "Setujui — Siap Ditandatangani", role: ["legal_officer","admin"], icon: CheckCircle2 },
+    { v: "revision_required", label: "Minta Revisi", role: ["legal_officer"], icon: XCircle, variant: "warn" },
+    { v: "ready_for_signature", label: "Setujui — Siap Ditandatangani", role: ["legal_officer"], icon: CheckCircle2 },
   ],
-  revision_required: [{ v: "under_legal_review", label: "Ajukan Ulang untuk Review", role: ["business_unit","admin"], icon: ArrowRight }],
-  ready_for_signature: [{ v: "pending_final_verification", label: "Upload Dokumen Tandatangan", role: ["business_unit","admin"], icon: Upload }],
+  revision_required: [{ v: "under_legal_review", label: "Ajukan Ulang untuk Review", role: ["business_unit"], icon: ArrowRight }],
+  ready_for_signature: [{ v: "pending_final_verification", label: "Upload Dokumen Tandatangan", role: ["business_unit"], icon: Upload }],
   pending_final_verification: [
-    { v: "revision_required", label: "Tolak Scan (Perlu Scan Ulang)", role: ["legal_officer","admin"], icon: XCircle, variant: "warn" },
-    { v: "signed_active", label: "Verifikasi & Aktifkan Kontrak", role: ["legal_officer","admin"], icon: CheckCircle2 },
+    { v: "revision_required", label: "Tolak Scan (Perlu Scan Ulang)", role: ["legal_officer"], icon: XCircle, variant: "warn" },
+    { v: "signed_active", label: "Verifikasi & Aktifkan Kontrak", role: ["legal_officer"], icon: CheckCircle2 },
   ],
 };
 
@@ -167,7 +167,7 @@ export default function ContractDetailSheet({ open, onOpenChange, contractId, on
                 <TabsContent value="versions" className="mt-5">
                   <div className="mb-4 flex items-center justify-between">
                     <p className="text-sm font-semibold text-slate-700">Riwayat Versi Dokumen</p>
-                    {(user?.role === "business_unit" || user?.role === "admin") && (
+                    {(user?.role === "business_unit" || user?.role === "legal_officer") && (
                       <label className="inline-flex">
                         <input type="file" className="hidden" accept=".docx,.pdf" data-testid="upload-version"
                           onChange={(e)=>{ const f=e.target.files?.[0]; if(f) handleUpload(f, ""); }} />

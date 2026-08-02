@@ -30,7 +30,8 @@ MONGO_URL = os.environ['MONGO_URL']
 DB_NAME = os.environ['DB_NAME']
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGORITHM = "HS256"
-JWT_EXP_HOURS = 12
+SESSION_INACTIVITY_MINUTES = 15
+JWT_REFRESH_THRESHOLD_SECONDS = 300  # sliding refresh when < 5 min remaining
 APP_NAME = os.environ.get('APP_NAME', 'crs-maslahat')
 EMERGENT_KEY = os.environ.get('EMERGENT_LLM_KEY')
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
@@ -50,6 +51,37 @@ STATUS_FLOW = [
     "signed_active",
     "expired",
 ]
+
+# ---------- Security Policy ----------
+# State-based Column Lock (BRD rule 3)
+LOCKED_STATUSES = {"ready_for_signature", "pending_final_verification", "signed_active"}
+LOCKED_FIELDS = {"contract_value", "partner_name", "effective_date"}
+
+# Field-level authorization (BRD rule 2)
+BU_EDITABLE_STATES = {"drafting", "revision_required"}
+BU_EDITABLE_FIELDS = {
+    "partner_name", "partner_pic_name", "partner_pic_phone", "partner_pic_email",
+    "institution_type", "agreement_title", "contract_value",
+    "effective_date", "expiry_date", "owning_bu", "bu_pic_name", "remarks",
+}
+LEGAL_EDITABLE_FIELDS = {"remarks"}  # Legal Officer can only update legal remarks
+BU_UPLOAD_EXTS = {"docx", "pdf"}      # BU: .docx (draft) + .pdf (final scan)
+LEGAL_UPLOAD_EXTS = {"docx", "pdf"}   # Legal: annotated files
+
+# State transitions per role (BRD rule 2 — exclusive rights)
+ALLOWED_TRANSITIONS = {
+    "business_unit": {
+        ("drafting", "under_legal_review"),
+        ("revision_required", "under_legal_review"),
+        ("ready_for_signature", "pending_final_verification"),
+    },
+    "legal_officer": {
+        ("under_legal_review", "ready_for_signature"),        # Approve
+        ("under_legal_review", "revision_required"),          # Request Revision
+        ("pending_final_verification", "revision_required"),  # Request Revision (scan)
+        ("pending_final_verification", "signed_active"),      # Verify & Activate
+    },
+}
 
 # ---------- App ----------
 app = FastAPI(title="CRS Maslahat API")
@@ -119,32 +151,48 @@ def verify_password(p: str, h: str) -> bool:
     except Exception:
         return False
 
-def create_access_token(user_id: str, email: str, role: str) -> str:
+def create_access_token(user_id: str, email: str, role: str, business_unit_id: Optional[str] = None) -> str:
     payload = {
         "sub": user_id, "email": email, "role": role,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXP_HOURS),
+        "businessUnitId": business_unit_id,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=SESSION_INACTIVITY_MINUTES),
         "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
-async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+async def get_current_user(
+    response: Response,
+    creds: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
     if not creds or not creds.credentials:
         raise HTTPException(401, "Not authenticated")
     try:
         payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Token expired")
+        raise HTTPException(401, "Session timed out (15 menit tidak aktif). Silakan login ulang.")
     except jwt.InvalidTokenError:
         raise HTTPException(401, "Invalid token")
     user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(401, "User not found")
+    # Sliding session: mint new token if remaining life < threshold — enables 15-min inactivity timeout.
+    try:
+        exp_ts = payload.get("exp")
+        if exp_ts:
+            exp_dt = datetime.fromtimestamp(exp_ts, tz=timezone.utc)
+            remaining = (exp_dt - datetime.now(timezone.utc)).total_seconds()
+            if remaining < JWT_REFRESH_THRESHOLD_SECONDS:
+                new_tok = create_access_token(user["id"], user["email"], user["role"], user.get("business_unit_id"))
+                response.headers["X-New-Token"] = new_tok
+    except Exception:
+        pass
     return user
 
 def require_roles(*roles: str):
+    """Strict role gate — admin has NO implicit bypass per BRD security policy."""
     async def _check(user: dict = Depends(get_current_user)):
-        if user["role"] not in roles and user["role"] != "admin":
-            raise HTTPException(403, f"Requires role: {roles}")
+        if user["role"] not in roles:
+            raise HTTPException(403, f"Akses ditolak untuk role '{user['role']}'. Diperlukan: {list(roles)}")
         return user
     return _check
 
@@ -217,9 +265,9 @@ def strip_id(doc):
 
 # ---------- Seed ----------
 DEMO_USERS = [
-    {"email": "bu@bsimaslahat.co.id", "name": "Ahmad Faizal (Business Unit)", "role": "business_unit", "password": "Demo@2026"},
-    {"email": "legal@bsimaslahat.co.id", "name": "Siti Rahmawati (Legal Officer)", "role": "legal_officer", "password": "Demo@2026"},
-    {"email": "management@bsimaslahat.co.id", "name": "Budi Santoso (Manajemen)", "role": "management", "password": "Demo@2026"},
+    {"email": "bu@bsimaslahat.co.id", "name": "Ahmad Faizal (Business Unit)", "role": "business_unit", "password": "Demo@2026", "business_unit_id": "ZISWAF"},
+    {"email": "legal@bsimaslahat.co.id", "name": "Siti Rahmawati (Legal Officer)", "role": "legal_officer", "password": "Demo@2026", "business_unit_id": None},
+    {"email": "management@bsimaslahat.co.id", "name": "Budi Santoso (Manajemen)", "role": "management", "password": "Demo@2026", "business_unit_id": None},
 ]
 
 async def seed_users():
@@ -231,19 +279,29 @@ async def seed_users():
         await db.users.insert_one({
             "id": str(uuid.uuid4()),
             "email": admin_email, "name": admin_name, "role": "admin",
+            "business_unit_id": None,
             "password_hash": hash_password(admin_pw), "created_at": now_iso(),
         })
     else:
+        updates = {}
         if not verify_password(admin_pw, existing["password_hash"]):
-            await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_pw)}})
+            updates["password_hash"] = hash_password(admin_pw)
+        if "business_unit_id" not in existing:
+            updates["business_unit_id"] = None
+        if updates:
+            await db.users.update_one({"email": admin_email}, {"$set": updates})
     for u in DEMO_USERS:
         e = u["email"].lower()
-        if not await db.users.find_one({"email": e}):
+        existing_u = await db.users.find_one({"email": e})
+        if not existing_u:
             await db.users.insert_one({
                 "id": str(uuid.uuid4()),
                 "email": e, "name": u["name"], "role": u["role"],
+                "business_unit_id": u.get("business_unit_id"),
                 "password_hash": hash_password(u["password"]), "created_at": now_iso(),
             })
+        elif "business_unit_id" not in existing_u:
+            await db.users.update_one({"email": e}, {"$set": {"business_unit_id": u.get("business_unit_id")}})
 
 async def seed_sample_contracts():
     if await db.contracts.count_documents({}) > 0:
@@ -329,10 +387,14 @@ async def login(body: LoginIn):
     user = await db.users.find_one({"email": body.email.lower()})
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(401, "Email atau password salah")
-    token = create_access_token(user["id"], user["email"], user["role"])
+    token = create_access_token(user["id"], user["email"], user["role"], user.get("business_unit_id"))
     return {
         "token": token,
-        "user": {"id": user["id"], "email": user["email"], "name": user["name"], "role": user["role"]},
+        "session_minutes": SESSION_INACTIVITY_MINUTES,
+        "user": {
+            "id": user["id"], "email": user["email"], "name": user["name"],
+            "role": user["role"], "business_unit_id": user.get("business_unit_id"),
+        },
     }
 
 @api.get("/auth/me")
@@ -458,6 +520,7 @@ async def create_contract(body: ContractIn, user: dict = Depends(require_roles("
         "id": str(uuid.uuid4()),
         "contract_id": cid,
         "bu_pic_id": user["id"],
+        "business_unit_id": user.get("business_unit_id") or body.owning_bu,
         "status": "drafting",
         "versions": [],
         "created_at": now_iso(),
@@ -466,6 +529,71 @@ async def create_contract(body: ContractIn, user: dict = Depends(require_roles("
     await db.contracts.insert_one(doc)
     await add_audit(doc["id"], user, "CONTRACT_CREATED", f"Kontrak {cid} dibuat")
     return strip_id(doc)
+
+class ContractUpdate(BaseModel):
+    partner_name: Optional[str] = None
+    partner_pic_name: Optional[str] = None
+    partner_pic_phone: Optional[str] = None
+    partner_pic_email: Optional[EmailStr] = None
+    institution_type: Optional[str] = None
+    agreement_title: Optional[str] = None
+    contract_value: Optional[float] = None
+    effective_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    owning_bu: Optional[str] = None
+    bu_pic_name: Optional[str] = None
+    remarks: Optional[str] = None
+
+@api.put("/contracts/{cid}")
+async def update_contract_metadata(cid: str, body: ContractUpdate, user: dict = Depends(get_current_user)):
+    """Update contract metadata with state-based Column-Level Lock (BRD rule 3)."""
+    doc = await db.contracts.find_one({"id": cid})
+    if not doc:
+        raise HTTPException(404, "Kontrak tidak ditemukan")
+    payload = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not payload:
+        raise HTTPException(400, "Tidak ada field untuk diubah")
+    role = user["role"]
+    current_status = doc.get("status", "drafting")
+
+    if role == "business_unit":
+        if current_status not in BU_EDITABLE_STATES:
+            raise HTTPException(403, {
+                "error": "State Locked",
+                "message": f"Business Unit tidak boleh mengubah metadata saat status '{current_status}'. Hanya diizinkan pada: {sorted(BU_EDITABLE_STATES)}.",
+                "current_status": current_status,
+            })
+        disallowed = [k for k in payload if k not in BU_EDITABLE_FIELDS]
+        if disallowed:
+            raise HTTPException(403, {"error": "Field not permitted", "fields": disallowed})
+    elif role == "legal_officer":
+        # Legal Officer may only edit legal remarks — never financial metadata.
+        disallowed = [k for k in payload if k not in LEGAL_EDITABLE_FIELDS]
+        if disallowed:
+            raise HTTPException(403, {
+                "error": "Field not permitted for Legal Officer",
+                "fields": disallowed,
+                "allowed": sorted(LEGAL_EDITABLE_FIELDS),
+            })
+    else:
+        # admin: no contract metadata editing per BRD; management: read-only.
+        raise HTTPException(403, f"Role '{role}' tidak diperbolehkan mengubah metadata kontrak")
+
+    # Defensive Column-Level Lock — reject sensitive edits in locked states regardless of role.
+    if current_status in LOCKED_STATUSES:
+        locked_present = [k for k in payload if k in LOCKED_FIELDS]
+        if locked_present:
+            raise HTTPException(403, {
+                "error": "State Locked",
+                "message": f"Field terkunci pada status '{current_status}'",
+                "locked_fields": locked_present,
+                "current_status": current_status,
+            })
+
+    payload["updated_at"] = now_iso()
+    await db.contracts.update_one({"id": cid}, {"$set": payload})
+    await add_audit(cid, user, "METADATA_UPDATED", f"Fields: {', '.join(payload.keys())}")
+    return {"ok": True, "updated_fields": list(payload.keys())}
 
 @api.get("/contracts/{cid}")
 async def get_contract(cid: str, user: dict = Depends(get_current_user)):
@@ -486,13 +614,22 @@ async def update_status(cid: str, body: StatusUpdate, user: dict = Depends(get_c
     if not doc:
         raise HTTPException(404, "Kontrak tidak ditemukan")
     new_status = body.status
-    # role guard
-    if user["role"] not in ("admin", "legal_officer", "business_unit"):
-        raise HTTPException(403, "Tidak diperbolehkan mengubah status")
     if new_status not in STATUS_FLOW:
         raise HTTPException(400, "Status tidak valid")
+    role = user["role"]
+    if role not in ALLOWED_TRANSITIONS:
+        raise HTTPException(403, f"Role '{role}' tidak diperbolehkan mengubah status kontrak")
+    transition = (doc.get("status"), new_status)
+    if transition not in ALLOWED_TRANSITIONS[role]:
+        raise HTTPException(403, {
+            "error": "Transisi status tidak diperbolehkan",
+            "role": role,
+            "from_status": doc.get("status"),
+            "to_status": new_status,
+            "allowed_for_role": sorted([f"{a}→{b}" for a, b in ALLOWED_TRANSITIONS[role]]),
+        })
     await db.contracts.update_one({"id": cid}, {"$set": {"status": new_status, "updated_at": now_iso()}})
-    await add_audit(cid, user, "STATUS_CHANGED", f"Status diubah menjadi {new_status}. {body.remarks or ''}")
+    await add_audit(cid, user, "STATUS_CHANGED", f"{doc.get('status')} → {new_status}. {body.remarks or ''}")
     return {"ok": True, "status": new_status}
 
 # ---------- File upload / versions ----------
@@ -502,12 +639,23 @@ async def upload_version(
     file: UploadFile = File(...),
     remarks: str = Form(""),
     version_label: str = Form(""),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_roles("business_unit", "legal_officer")),
 ):
     doc = await db.contracts.find_one({"id": cid})
     if not doc:
         raise HTTPException(404, "Kontrak tidak ditemukan")
-    ext = (file.filename.split(".")[-1] if "." in file.filename else "bin").lower()
+    ext = (file.filename.split(".")[-1] if "." in (file.filename or "") else "bin").lower()
+    # Role-based file-type restrictions per BRD rule 2.
+    allowed_exts = BU_UPLOAD_EXTS if user["role"] == "business_unit" else LEGAL_UPLOAD_EXTS
+    if ext not in allowed_exts:
+        raise HTTPException(400, f"Role '{user['role']}' hanya boleh mengunggah: {sorted(allowed_exts)}")
+    # State-lock: BU cannot upload draft (.docx) once in locked state; PDF scan uploads allowed only in ready_for_signature.
+    if user["role"] == "business_unit":
+        current = doc.get("status", "drafting")
+        if ext == "docx" and current not in BU_EDITABLE_STATES:
+            raise HTTPException(403, {"error": "State Locked", "message": f"BU tidak boleh upload draft baru saat status '{current}'"})
+        if ext == "pdf" and current != "ready_for_signature":
+            raise HTTPException(403, {"error": "State Locked", "message": "Scan PDF tandatangan hanya bisa diupload saat status 'ready_for_signature'"})
     file_id = str(uuid.uuid4())
     path = f"{APP_NAME}/contracts/{cid}/{file_id}.{ext}"
     data = await file.read()
@@ -525,6 +673,7 @@ async def upload_version(
         "size": len(data),
         "uploader_id": user["id"],
         "uploader_name": user["name"],
+        "uploader_role": user["role"],
         "uploaded_at": now_iso(),
         "remarks": remarks,
     }
@@ -1073,12 +1222,108 @@ async def export_pdf(
 # ---------- Mount ----------
 app.include_router(api)
 
+# ---------- Global Security Middleware ----------
+# 1) Data-retention: block DELETE on contract resources (BRD rule 5)
+# 2) Audit-Trail Logger (append-only) for POST/PUT/PATCH/DELETE + file downloads (BRD rule 4)
+from starlette.responses import JSONResponse as _StarletteJSON
+
+BLOCK_DELETE_PREFIXES = ("/api/contracts", "/api/files", "/api/comments", "/api/versions")
+
+@app.middleware("http")
+async def security_and_audit_middleware(request: Request, call_next):
+    method = request.method
+    path = request.url.path
+
+    async def _write_audit(status_code: int):
+        """Append-only audit entry. Best-effort, never raises."""
+        user_id = role = email = business_unit_id = None
+        auth_hdr = request.headers.get("authorization")
+        raw = None
+        if auth_hdr and auth_hdr.startswith("Bearer "):
+            raw = auth_hdr[7:]
+        elif request.query_params.get("token"):
+            raw = request.query_params.get("token")
+        if raw:
+            try:
+                p = jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+                user_id = p.get("sub"); role = p.get("role")
+                email = p.get("email"); business_unit_id = p.get("businessUnitId")
+            except Exception:
+                pass
+        xff = request.headers.get("x-forwarded-for")
+        ip = (xff.split(",")[0].strip() if xff else (request.client.host if request.client else "unknown"))
+        try:
+            await db.system_audit.insert_one({
+                "id": str(uuid.uuid4()),
+                "timestamp": now_iso(),
+                "user_id": user_id, "user_email": email, "role": role,
+                "business_unit_id": business_unit_id,
+                "method": method, "path": path,
+                "query": str(request.url.query)[:400] if request.url.query else "",
+                "status_code": status_code,
+                "ip": ip,
+                "user_agent": request.headers.get("user-agent", "")[:200],
+            })
+        except Exception as e:
+            logger.warning(f"audit log failed: {e}")
+
+    # (5) NO-DELETE policy — block AND log the attempt
+    if method == "DELETE" and any(path.startswith(p) for p in BLOCK_DELETE_PREFIXES):
+        await _write_audit(405)
+        return _StarletteJSON(
+            status_code=405,
+            content={"detail": "Data Retention Policy: contract resources cannot be deleted", "path": path},
+        )
+
+    response = await call_next(request)
+
+    if method == "OPTIONS" or not path.startswith("/api/"):
+        return response
+
+    is_mutating = method in ("POST", "PUT", "PATCH", "DELETE")
+    is_file_download = method == "GET" and path.startswith("/api/files/")
+    if is_mutating or is_file_download:
+        await _write_audit(response.status_code)
+    return response
+
+# ---------- Admin Audit Log API ----------
+@app.get("/api/admin/audit-log", tags=["Admin"])
+async def admin_audit_log(
+    limit: int = Query(200, ge=1, le=1000),
+    method: Optional[str] = None,
+    role_filter: Optional[str] = None,
+    user: dict = Depends(require_roles("admin")),
+):
+    q = {}
+    if method:
+        q["method"] = method.upper()
+    if role_filter:
+        q["role"] = role_filter
+    items = await db.system_audit.find(q, {"_id": 0}).sort("timestamp", -1).limit(limit).to_list(limit)
+    total = await db.system_audit.count_documents({})
+    return {"items": items, "total": total, "returned": len(items)}
+
+@app.get("/api/admin/security-policy", tags=["Admin"])
+async def get_security_policy(user: dict = Depends(get_current_user)):
+    """Returns the active RBAC + state-lock matrix for the frontend to consume."""
+    return {
+        "session_minutes": SESSION_INACTIVITY_MINUTES,
+        "locked_statuses": sorted(LOCKED_STATUSES),
+        "locked_fields": sorted(LOCKED_FIELDS),
+        "bu_editable_states": sorted(BU_EDITABLE_STATES),
+        "bu_editable_fields": sorted(BU_EDITABLE_FIELDS),
+        "legal_editable_fields": sorted(LEGAL_EDITABLE_FIELDS),
+        "allowed_transitions": {r: sorted([f"{a}→{b}" for a, b in t]) for r, t in ALLOWED_TRANSITIONS.items()},
+        "no_delete_prefixes": list(BLOCK_DELETE_PREFIXES),
+    }
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-New-Token"],
 )
 
 @app.on_event("shutdown")
