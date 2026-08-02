@@ -91,3 +91,8 @@ credentials.json
 *.key
 .credentials
 frontend/node_modules/.cache/default-development/10.pack
+
+# Maslahat CRS specific
+backend/uploads/
+frontend/playwright-report/
+frontend/test-results/

@@ -19,6 +19,10 @@ from typing import List, Optional, Literal
 import bcrypt
 import jwt
 from docx import Document
+import os
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env")) # Load variables from .env into os.environ
+
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Response, Query, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
@@ -99,6 +103,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("crs")
 
 # ---------- Storage helpers ----------
+''' 
+# KODE CLOUD STORAGE LAMA (Dikomengari jika suatu saat butuh dipakai lagi)
 _storage_key: Optional[str] = None
 
 def init_storage() -> Optional[str]:
@@ -144,6 +150,50 @@ def get_object(path: str):
                             headers={"X-Storage-Key": key}, timeout=60)
     resp.raise_for_status()
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+'''
+
+UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+
+def init_storage() -> Optional[str]:
+    try:
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        return "local"
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
+        return None
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    if not init_storage():
+        raise HTTPException(500, "Storage unavailable")
+    
+    # Path might contain subdirectories (e.g. contracts/123/doc.pdf)
+    full_path = os.path.join(UPLOADS_DIR, path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    
+    with open(full_path, "wb") as f:
+        f.write(data)
+    
+    return {"status": "ok", "path": path}
+
+def get_object(path: str):
+    if not init_storage():
+        raise HTTPException(500, "Storage unavailable")
+        
+    full_path = os.path.join(UPLOADS_DIR, path)
+    if not os.path.exists(full_path):
+        raise HTTPException(404, "File not found")
+        
+    with open(full_path, "rb") as f:
+        content = f.read()
+        
+    # Simple guess for content type based on extension
+    content_type = "application/octet-stream"
+    if path.endswith(".pdf"):
+        content_type = "application/pdf"
+    elif path.endswith(".docx"):
+        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        
+    return content, content_type
 
 # ---------- Password + JWT ----------
 def hash_password(p: str) -> str:
