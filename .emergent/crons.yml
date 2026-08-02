@@ -1,0 +1,8 @@
+crons:
+  - name: expiry-reminders
+    description: "Scans active PKS daily at 08:00 WIB and creates H-60/H-30/H-7 expiry notifications"
+    cron: "0 1 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/expiry-reminders"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

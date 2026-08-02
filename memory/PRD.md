@@ -46,3 +46,10 @@ Build a high-fidelity full-stack Contract Repository System (CRS) for BSI Maslah
 
 ## Credentials
 See /app/memory/test_credentials.md
+
+## Update 2026-02-02 (Feature Wave 2)
+- **Auto-Fill Metadata (.docx)**: `POST /api/contracts/extract-docx` menggunakan python-docx untuk parsing judul, nama mitra (PT/YAYASAN/KOPERASI), tanggal (efektif+expiry), dan nilai (Rp). Form Pengajuan mengisi otomatis field kosong ketika file dijatuhkan.
+- **Analitik Portofolio**: `/analytics` page (recharts) — Total Nilai, Total PKS, Rata-rata; Bar chart nilai per BU, Pie chart sebaran status, Line chart tren bulanan, Top 5 mitra, Grid jenis institusi. Endpoint `GET /api/dashboard/analytics`.
+- **Reminder Otomatis H-60/H-30/H-7**: Cron webhook `POST /api/cron/expiry-reminders` (Bearer WEBHOOK_CRON_SECRET) di `.emergent/crons.yml` (daily 01:00 UTC / 08:00 WIB). Idempotent via X-Webhook-Id. Bell dropdown di navbar menampilkan unread count dan navigasi ke halaman Dual Review.
+- **Dual Review Mode**: `/review/:id` — side-by-side .docx text vs signed PDF (iframe). Tab section: Komentari Draft / Komentari Scan. Thread komentar per contract (`POST/GET /api/contracts/:id/comments`, `POST /api/comments/:id/resolve`). Legal Officer & Admin bisa mark resolved.
+- Endpoint tambahan: `GET /api/files/:id/text` (ekstraksi teks .docx), `POST /api/admin/run-expiry-reminders` (manual trigger admin).

@@ -11,8 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import StatusBadge, { STATUS_META } from "@/components/StatusBadge";
 import { toast } from "sonner";
-import { Download, Upload, Building2, Phone, Mail, User, DollarSign, Calendar, Briefcase, FileText, ClockAlert, ArrowRight, CheckCircle2, XCircle } from "lucide-react";
+import { Download, Upload, Building2, Phone, Mail, User, DollarSign, Calendar, Briefcase, FileText, ClockAlert, ArrowRight, CheckCircle2, XCircle, SplitSquareHorizontal } from "lucide-react";
 import { API_BASE } from "@/lib/api";
+import { useNavigate } from "react-router-dom";
 
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : "-";
 const fmtDT = (s) => s ? new Date(s).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "-";
@@ -34,6 +35,7 @@ const NEXT_STATUS = {
 
 export default function ContractDetailSheet({ open, onOpenChange, contractId, onChanged }) {
   const { user } = useAuth();
+  const nav = useNavigate();
   const [contract, setContract] = useState(null);
   const [audit, setAudit] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -101,6 +103,12 @@ export default function ContractDetailSheet({ open, onOpenChange, contractId, on
                   {contract.agreement_title}
                 </SheetTitle>
                 <p className="text-sm text-teal-100 mt-1">{contract.partner_name} • {contract.institution_type}</p>
+                <div className="mt-4">
+                  <Button data-testid="open-dual-review" onClick={()=>{ onOpenChange(false); nav(`/review/${contract.id}`); }}
+                    className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold h-9">
+                    <SplitSquareHorizontal className="h-4 w-4 mr-2" /> Buka Dual Review Mode
+                  </Button>
+                </div>
               </SheetHeader>
             </div>
 

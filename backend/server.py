@@ -5,14 +5,20 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import io
+import re
 import uuid
+import hmac
 import logging
+import asyncio
 import requests
 from datetime import datetime, timezone, timedelta
+from collections import Counter
 from typing import List, Optional, Literal
 
 import bcrypt
 import jwt
+from docx import Document
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Response, Query, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
@@ -28,6 +34,7 @@ JWT_EXP_HOURS = 12
 APP_NAME = os.environ.get('APP_NAME', 'crs-maslahat')
 EMERGENT_KEY = os.environ.get('EMERGENT_LLM_KEY')
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+WEBHOOK_CRON_SECRET = os.environ.get('WEBHOOK_CRON_SECRET', '')
 
 # ---------- Roles ----------
 Role = Literal["admin", "business_unit", "legal_officer", "management"]
@@ -556,6 +563,236 @@ async def download_file(file_id: str, token: Optional[str] = Query(None), author
 async def list_users(user: dict = Depends(require_roles("admin"))):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(500)
     return users
+
+# ---------- DOCX Auto-Fill ----------
+ID_MONTHS = {"januari":1,"februari":2,"maret":3,"april":4,"mei":5,"juni":6,"juli":7,
+             "agustus":8,"september":9,"oktober":10,"november":11,"desember":12}
+
+def _find_date(text: str) -> Optional[str]:
+    m = re.search(r"(\d{1,2})[\-/](\d{1,2})[\-/](\d{4})", text)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        try:
+            return datetime(y, mo, d).date().isoformat()
+        except Exception:
+            pass
+    m2 = re.search(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", text)
+    if m2:
+        d = int(m2.group(1)); mon = ID_MONTHS.get(m2.group(2).lower()); y = int(m2.group(3))
+        if mon:
+            try:
+                return datetime(y, mon, d).date().isoformat()
+            except Exception:
+                pass
+    return None
+
+def extract_docx_metadata(data: bytes) -> dict:
+    result = {"partner_name": "", "agreement_title": "", "effective_date": "",
+              "expiry_date": "", "contract_value": 0, "raw_text": ""}
+    try:
+        doc = Document(io.BytesIO(data))
+        paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+        raw = "\n".join(paragraphs)
+        for p in paragraphs[:20]:
+            up = p.upper()
+            if any(k in up for k in ["PERJANJIAN KERJA SAMA", "PERJANJIAN KERJASAMA", "PKS", "MEMORANDUM OF UNDERSTANDING", "MOU"]):
+                result["agreement_title"] = p[:200]
+                break
+        if not result["agreement_title"] and paragraphs:
+            result["agreement_title"] = paragraphs[0][:200]
+        m = re.search(r"(PT\.?\s+[A-Z][A-Za-z0-9\.\-\s&,]{2,80}|YAYASAN\s+[A-Z][A-Za-z0-9\.\-\s&,]{2,80}|KOPERASI\s+[A-Z][A-Za-z0-9\.\-\s&,]{2,80})", raw)
+        if m:
+            result["partner_name"] = m.group(1).strip().rstrip(",.").strip()[:120]
+        dates = []
+        for line in paragraphs:
+            d = _find_date(line)
+            if d and d not in dates:
+                dates.append(d)
+            if len(dates) >= 2:
+                break
+        if len(dates) >= 1:
+            result["effective_date"] = dates[0]
+        if len(dates) >= 2:
+            result["expiry_date"] = dates[1]
+        m3 = re.search(r"Rp\.?\s*([\d\.,]+)", raw)
+        if m3:
+            try:
+                num = m3.group(1).replace(".", "").replace(",", "")
+                result["contract_value"] = int(num)
+            except Exception:
+                pass
+        result["raw_text"] = raw[:12000]
+    except Exception as e:
+        logger.warning(f"docx parse error: {e}")
+    return result
+
+@api.post("/contracts/extract-docx")
+async def extract_docx_endpoint(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    if not (file.filename or "").lower().endswith(".docx"):
+        raise HTTPException(400, "Hanya file .docx yang didukung")
+    data = await file.read()
+    return extract_docx_metadata(data)
+
+@api.get("/files/{file_id}/text")
+async def file_text(file_id: str, user: dict = Depends(get_current_user)):
+    rec = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Tidak ditemukan")
+    data, _ = get_object(rec["storage_path"])
+    if rec["original_filename"].lower().endswith(".docx"):
+        meta = extract_docx_metadata(data)
+        return {"kind": "docx", "text": meta.get("raw_text", ""), "meta": meta, "filename": rec["original_filename"]}
+    return {"kind": "binary", "filename": rec["original_filename"], "text": ""}
+
+# ---------- Analytics ----------
+@api.get("/dashboard/analytics")
+async def analytics(user: dict = Depends(get_current_user)):
+    docs = await db.contracts.find({}, {"_id": 0}).to_list(1000)
+    by_bu = {}
+    by_status = {}
+    by_inst = {}
+    total_value = 0
+    for d in docs:
+        ds = compute_derived_status(d)
+        by_bu.setdefault(d["owning_bu"], {"count": 0, "value": 0})
+        by_bu[d["owning_bu"]]["count"] += 1
+        by_bu[d["owning_bu"]]["value"] += d.get("contract_value") or 0
+        by_status[ds] = by_status.get(ds, 0) + 1
+        by_inst[d["institution_type"]] = by_inst.get(d["institution_type"], 0) + 1
+        total_value += d.get("contract_value") or 0
+    monthly = Counter()
+    for d in docs:
+        try:
+            dt = datetime.fromisoformat(d["created_at"])
+            monthly[dt.strftime("%Y-%m")] += 1
+        except Exception:
+            pass
+    top = sorted(docs, key=lambda x: x.get("contract_value") or 0, reverse=True)[:5]
+    return {
+        "by_bu": [{"bu": k, **v} for k, v in by_bu.items()],
+        "by_status": [{"status": k, "count": v} for k, v in by_status.items()],
+        "by_institution": [{"institution_type": k, "count": v} for k, v in by_inst.items()],
+        "monthly_new": sorted([{"month": k, "count": v} for k, v in monthly.items()], key=lambda x: x["month"]),
+        "top_partners": [{"partner_name": p["partner_name"], "contract_id": p["contract_id"],
+                          "value": p.get("contract_value") or 0, "owning_bu": p["owning_bu"]} for p in top],
+        "total_value": total_value,
+        "total_contracts": len(docs),
+    }
+
+# ---------- Notifications ----------
+async def create_notification(user_id: str, kind: str, title: str, body: str, contract_id: Optional[str] = None):
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user_id, "kind": kind, "title": title, "body": body,
+        "contract_id": contract_id, "read": False, "created_at": now_iso(),
+    })
+
+@api.get("/notifications")
+async def list_notifications(user: dict = Depends(get_current_user)):
+    q = {"user_id": user["id"]}
+    items = await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+    unread = await db.notifications.count_documents({**q, "read": False})
+    return {"items": items, "unread": unread}
+
+@api.post("/notifications/{nid}/read")
+async def mark_read(nid: str, user: dict = Depends(get_current_user)):
+    await db.notifications.update_one({"id": nid, "user_id": user["id"]}, {"$set": {"read": True}})
+    return {"ok": True}
+
+@api.post("/notifications/read-all")
+async def mark_all_read(user: dict = Depends(get_current_user)):
+    await db.notifications.update_many({"user_id": user["id"], "read": False}, {"$set": {"read": True}})
+    return {"ok": True}
+
+# ---------- Comments (Dual Review) ----------
+class CommentIn(BaseModel):
+    text: str
+    version_id: Optional[str] = None
+    section: Optional[str] = "draft"
+
+@api.get("/contracts/{cid}/comments")
+async def list_comments(cid: str, user: dict = Depends(get_current_user)):
+    return await db.comments.find({"contract_id": cid}, {"_id": 0}).sort("created_at", 1).to_list(500)
+
+@api.post("/contracts/{cid}/comments")
+async def add_comment(cid: str, body: CommentIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()), "contract_id": cid,
+        "user_id": user["id"], "user_name": user["name"], "user_role": user["role"],
+        "text": body.text, "version_id": body.version_id, "section": body.section or "draft",
+        "resolved": False, "created_at": now_iso(),
+    }
+    await db.comments.insert_one(doc)
+    await add_audit(cid, user, "COMMENT_ADDED", f"[{doc['section']}] {body.text[:80]}")
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+@api.post("/comments/{comment_id}/resolve")
+async def resolve_comment(comment_id: str, user: dict = Depends(get_current_user)):
+    await db.comments.update_one({"id": comment_id},
+                                  {"$set": {"resolved": True, "resolved_by": user["name"], "resolved_at": now_iso()}})
+    return {"ok": True}
+
+# ---------- Cron webhook: expiry reminders ----------
+async def _run_expiry_reminders():
+    docs = await db.contracts.find({"status": "signed_active"}, {"_id": 0}).to_list(1000)
+    today = datetime.now(timezone.utc).date()
+    legal = await db.users.find({"role": {"$in": ["legal_officer", "admin"]}}, {"_id": 0}).to_list(100)
+    created = 0
+    for d in docs:
+        try:
+            exp = datetime.fromisoformat(d["expiry_date"]).date()
+        except Exception:
+            continue
+        days = (exp - today).days
+        # Bucket into H-60 / H-30 / H-7 windows for realistic reminders
+        if 55 <= days <= 65:
+            bucket = 60
+        elif 25 <= days <= 35:
+            bucket = 30
+        elif 3 <= days <= 9:
+            bucket = 7
+        else:
+            continue
+        title = f"PKS {d['contract_id']} berakhir dalam {days} hari"
+        body = f"{d['partner_name']} — {d['agreement_title'][:80]} berakhir pada {d['expiry_date']}"
+        recipients = set()
+        if d.get("bu_pic_id"):
+            recipients.add(d["bu_pic_id"])
+        for u in legal:
+            recipients.add(u["id"])
+        for uid in recipients:
+            existing = await db.notifications.find_one({
+                "user_id": uid, "contract_id": d["id"], "kind": f"expiry_h{bucket}"
+            })
+            if existing:
+                continue
+            await create_notification(uid, f"expiry_h{bucket}", title, body, contract_id=d["id"])
+            created += 1
+    logger.info(f"expiry-reminders: {created} notifications created")
+
+@api.post("/cron/expiry-reminders")
+async def cron_expiry(
+    x_webhook_id: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Auth required")
+    token = authorization[7:]
+    if not WEBHOOK_CRON_SECRET or not hmac.compare_digest(token, WEBHOOK_CRON_SECRET):
+        raise HTTPException(401, "Invalid webhook secret")
+    run_id = x_webhook_id or str(uuid.uuid4())
+    if await db.cron_runs.find_one({"run_id": run_id}):
+        return {"ok": True, "duplicate": True}
+    await db.cron_runs.insert_one({"run_id": run_id, "job": "expiry-reminders", "created_at": now_iso()})
+    asyncio.create_task(_run_expiry_reminders())
+    return {"ok": True, "run_id": run_id}
+
+# Manual trigger for testing (admin only)
+@api.post("/admin/run-expiry-reminders")
+async def admin_run_expiry(user: dict = Depends(require_roles("admin"))):
+    await _run_expiry_reminders()
+    return {"ok": True}
 
 # ---------- Mount ----------
 app.include_router(api)

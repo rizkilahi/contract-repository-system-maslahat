@@ -7,6 +7,8 @@ import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import SubmitContract from "@/pages/SubmitContract";
 import UsersPage from "@/pages/UsersPage";
+import Analytics from "@/pages/Analytics";
+import DualReview from "@/pages/DualReview";
 
 function Protected({ children, roles }) {
   const { user, loading } = useAuth();
@@ -27,6 +29,8 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<Protected><Dashboard /></Protected>} />
             <Route path="/contracts" element={<Protected><Dashboard /></Protected>} />
+            <Route path="/analytics" element={<Protected><Analytics /></Protected>} />
+            <Route path="/review/:id" element={<Protected><DualReview /></Protected>} />
             <Route path="/submit" element={<Protected roles={["admin","business_unit"]}><SubmitContract /></Protected>} />
             <Route path="/users" element={<Protected roles={["admin"]}><UsersPage /></Protected>} />
             <Route path="*" element={<Navigate to="/" replace />} />

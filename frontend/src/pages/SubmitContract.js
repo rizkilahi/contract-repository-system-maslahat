@@ -22,6 +22,7 @@ export default function SubmitContract() {
   const [file, setFile] = useState(null);
   const [drag, setDrag] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [autofilling, setAutofilling] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const inputRef = useRef(null);
 
@@ -29,12 +30,37 @@ export default function SubmitContract() {
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
-  const onDrop = (e) => {
-    e.preventDefault(); setDrag(false);
-    const f = e.dataTransfer.files?.[0];
+  const handleFile = async (f) => {
     if (!f) return;
     if (!f.name.toLowerCase().endsWith(".docx")) { toast.error("Hanya file .docx yang diperbolehkan"); return; }
     setFile(f);
+    // Auto-fill metadata
+    setAutofilling(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const { data } = await api.post("/contracts/extract-docx", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const filled = [];
+      setForm(prev => {
+        const next = { ...prev };
+        if (data.agreement_title && !prev.agreement_title) { next.agreement_title = data.agreement_title; filled.push("Judul PKS"); }
+        if (data.partner_name && !prev.partner_name) { next.partner_name = data.partner_name; filled.push("Nama Mitra"); }
+        if (data.effective_date && !prev.effective_date) { next.effective_date = data.effective_date; filled.push("Tgl Efektif"); }
+        if (data.expiry_date && !prev.expiry_date) { next.expiry_date = data.expiry_date; filled.push("Tgl Berakhir"); }
+        if (data.contract_value && !prev.contract_value) { next.contract_value = data.contract_value; filled.push("Nilai"); }
+        return next;
+      });
+      if (filled.length > 0) toast.success(`Auto-fill: ${filled.join(", ")}`);
+      else toast.message("Tidak ada metadata yang bisa diekstrak otomatis dari file ini");
+    } catch (e) {
+      toast.error("Gagal mengekstrak metadata: " + formatApiError(e?.response?.data?.detail));
+    } finally { setAutofilling(false); }
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault(); setDrag(false);
+    const f = e.dataTransfer.files?.[0];
+    handleFile(f);
   };
 
   const submit = async (e) => {
@@ -135,7 +161,10 @@ export default function SubmitContract() {
         </Card>
 
         <Card className="border-slate-200 shadow-sm bg-white p-6">
-          <h3 className="font-heading font-bold text-slate-900 mb-4">Draft PKS (.docx)</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-heading font-bold text-slate-900">Draft PKS (.docx)</h3>
+            {autofilling && <span className="text-xs text-teal-700 font-semibold inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Mengekstrak metadata...</span>}
+          </div>
           <div
             data-testid="dropzone"
             onDragOver={(e)=>{e.preventDefault(); setDrag(true);}}
@@ -158,7 +187,7 @@ export default function SubmitContract() {
                 <p className="text-xs text-slate-500 mt-1">atau klik untuk memilih file</p>
               </div>
             )}
-            <input ref={inputRef} type="file" accept=".docx" hidden onChange={(e)=>{ const f=e.target.files?.[0]; if(f){ if(!f.name.toLowerCase().endsWith(".docx")){ toast.error("Hanya .docx"); return;} setFile(f);} }} />
+            <input ref={inputRef} type="file" accept=".docx" hidden onChange={(e)=>{ const f=e.target.files?.[0]; handleFile(f); }} />
           </div>
         </Card>
 

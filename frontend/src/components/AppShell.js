@@ -3,9 +3,10 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth, ROLE_LABEL } from "@/context/AuthContext";
 import {
   LayoutDashboard, FileText, FilePlus2, Users, LogOut,
-  ChevronLeft, ChevronRight, Search, Bell, ShieldCheck, AlertOctagon, MessageCircleQuestion
+  ChevronLeft, ChevronRight, Search, ShieldCheck, AlertOctagon, MessageCircleQuestion, BarChart3
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import NotificationBell from "@/components/NotificationBell";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator
@@ -17,6 +18,7 @@ import { toast } from "sonner";
 const NAV = [
   { to: "/", label: "Dasbor Utama", icon: LayoutDashboard, roles: ["admin","business_unit","legal_officer","management"] },
   { to: "/contracts", label: "Repositori Kontrak", icon: FileText, roles: ["admin","business_unit","legal_officer","management"] },
+  { to: "/analytics", label: "Analitik Portofolio", icon: BarChart3, roles: ["admin","business_unit","legal_officer","management"] },
   { to: "/submit", label: "Pengajuan PKS Baru", icon: FilePlus2, roles: ["admin","business_unit"] },
   { to: "/users", label: "Manajemen Pengguna", icon: Users, roles: ["admin"] },
 ];
@@ -51,10 +53,7 @@ export default function AppShell({ children }) {
           </div>
 
           <div className="ml-auto flex items-center gap-3">
-            <button data-testid="notification-btn" className="relative rounded-full p-2 text-slate-500 hover:bg-slate-100 transition-colors" title="Notifikasi">
-              <Bell className="h-5 w-5" />
-              <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-white"></span>
-            </button>
+            <NotificationBell />
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
