@@ -1,0 +1,109 @@
+{
+  "theme_settings": {
+    "mode": "light",
+    "rationale": "Matches Islamic corporate professional environment. Light warm gray background (#F8FAFC) creates a clean, trust-inspiring canvas, ensuring high readability for dense contract data."
+  },
+  "typography": {
+    "headings": {
+      "font": "Manrope",
+      "rationale": "Authoritative yet approachable sans-serif. Avoids generic Inter. Adds professional character.",
+      "styles": "Tight tracking (tracking-tight), font-bold for primary KPIs, font-semibold for standard headers."
+    },
+    "body": {
+      "font": "Plus Jakarta Sans",
+      "rationale": "Highly legible, modern geometric sans that pairs perfectly with Manrope, popular in Indonesian tech ecosystems."
+    },
+    "anti_patterns": [
+      "No generic Inter or Roboto for headings.",
+      "No centered layouts for dense data.",
+      "Do not use text sizes larger than text-4xl for dashboards; keep it compact."
+    ]
+  },
+  "colors": {
+    "primary": {
+      "name": "Deep Teal",
+      "value": "#008A85",
+      "tailwind": "emerald-700 / teal-700",
+      "usage": "Brand identity, top navbar, primary action buttons, active states, breadcrumbs."
+    },
+    "accent": {
+      "name": "Warm Gold",
+      "value": "#F3A912",
+      "tailwind": "amber-500",
+      "usage": "Highlighted badges, notification indicators, secondary prominent buttons."
+    },
+    "background": {
+      "name": "Light Warm Gray",
+      "value": "#F8FAFC",
+      "tailwind": "slate-50",
+      "usage": "Global application body background."
+    },
+    "surface": {
+      "name": "Crisp White",
+      "value": "#FFFFFF",
+      "tailwind": "white",
+      "usage": "Cards, modals, side-panels, dropdowns."
+    },
+    "status_badges": {
+      "signed_active": "emerald-100 text-emerald-700",
+      "pending_verification": "amber-100 text-amber-700",
+      "under_legal_review": "teal-100 text-teal-700",
+      "expired": "rose-100 text-rose-700"
+    }
+  },
+  "visual_enhancers": {
+    "borders": "Soft borders (border-slate-200) on all surface elements (cards, panels) to create crisp definition without heavy shadows.",
+    "shadows": "Subtle ambient shadows (shadow-sm or custom shadow-[0_2px_10px_rgba(0,0,0,0.05)]) for cards. Avoid heavy or muddy shadows.",
+    "gradients": "Rounded gradient card headers with dark backgrounds (e.g., bg-gradient-to-r from-slate-900 to-slate-800) selectively used for hero/highlight cards as requested.",
+    "glassmorphism": "Used only for floating action buttons or sticky headers if they overlap content. Otherwise, rely on solid Crisp White surfaces to prevent visual refraction of data."
+  },
+  "component_guidelines": {
+    "navbar": "Top navigation bar styled with Deep Teal. Contains a clean logo 'BSI Maslahat | CRS', user avatar, and quick search. Must remain fixed at the top (sticky top-0 z-50).",
+    "sidebar": "Collapsible sidebar navigation. Active states must use BSI Maslahat Deep Teal (#008A85) background or prominent text/icon color with a left border indicator.",
+    "kpi_cards": "Bento-style grid. Features a left-border accent (border-l-4) using status colors. Use dark rounded gradient headers for primary context if needed.",
+    "data_table": "Contract data grid with F-pattern scanning. Left-align columns. Include search + filters (Institution Type, Owning BU). Use pill-shaped status badges.",
+    "modals_side_panels": "Contract detail side-panel (Sheet component) or modal for metadata grid, version history, and audit trail timeline. Must use crisp 1px borders and solid white background.",
+    "forms": "Drafting & submission form using standard Shadcn form components but styled organically. Includes a 'smart-info' button triggering a Legal Guidelines matrix modal, and a drag-and-drop file upload zone (dashed border-slate-300, hover:border-teal-500).",
+    "floating_action_buttons": "Pill-shaped floating buttons in the bottom right: 'LAPORKAN SEKARANG' (Report Now - Red/Rose pill) and 'Tanya aku!' (AI helper - Teal pill). Must use shadow-lg and hover:-translate-y-1 transition."
+  },
+  "grids_layouts": {
+    "spacing": "Generous spacing. Use p-6 or p-8 inside cards to let data breathe.",
+    "grid_strategy": "High Density Grid for dashboards. Dashboard KPI cards use grid-cols-1 md:grid-cols-2 lg:grid-cols-4 with gap-4 or gap-6.",
+    "alignment": "Optical alignment prioritized. Forms and tables strictly left-aligned."
+  },
+  "motion_interactions": {
+    "hover_states": "All interactive elements must explicitly define hover colors (e.g., hover:bg-teal-800 for primary buttons). Cards should have a slight lift (-translate-y-0.5) and shadow enhancement on hover.",
+    "transitions": "Use specific transitions: 'transition-colors duration-200' or 'transition-transform duration-200'. NO 'transition-all'."
+  },
+  "accessibility": {
+    "contrast": "Ensure text over Teal or Gold backgrounds meets 4.5:1 ratio (use white text on Teal, dark gray/black on Gold).",
+    "focus": "focus:ring-2 focus:ring-teal-500 focus:outline-none on all inputs and buttons.",
+    "testing": "All interactive and key informational elements MUST include a `data-testid` attribute."
+  },
+  "media": {
+    "icons": "Use lucide-react (default). For specific brand elements, match standard corporate weights (stroke-width 1.5).",
+    "image_urls": {
+      "user_avatar": "https://images.pexels.com/photos/37148308/pexels-photo-37148308.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Start by establishing the Layout shell: Top Navbar (sticky, Teal background) and Collapsible Sidebar.",
+    "Implement the Dashboard view with 4 KPI cards (Total Active, Pending Verification, Expiring Soon, Expired) using the High Density Grid pattern.",
+    "Build the Contract Data Table with filtering dropdowns and status badges. Integrate a 'View Details' action opening a Sheet/Side-panel.",
+    "Create the Contract Details side-panel featuring a metadata grid and an audit trail timeline.",
+    "Implement the Drafting & Submission form with a drag-and-drop zone and 'smart-info' modal.",
+    "Add the Floating Action Buttons ('LAPORKAN SEKARANG', 'Tanya aku!') fixed to the bottom right.",
+    "Ensure all components are strictly written in .js (JavaScript React) and not TypeScript.",
+    "Utilize Shadcn UI components heavily but customize them to match the BSI Maslahat brand colors."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Avoid 'AI slop' aesthetics: no uniform styling or generic centered layouts.",
+    "Create depth through layered design elements with z-index hierarchy and crisp 1px borders.",
+    "NEVER use generic AI emojis (🤖🧠💭) for icons; stick to lucide-react.",
+    "Ensure all hover, focus, and active states are clearly defined.",
+    "Do not center align the app container (.App { text-align: center; } is forbidden).",
+    "Use pill-shaped or sharp buttons rather than generic rounded defaults.",
+    "Prioritize Shadcn components from src/components/ui.",
+    "Include `data-testid` on all buttons, links, and forms."
+  ]
+}
