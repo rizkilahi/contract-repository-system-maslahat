@@ -186,8 +186,42 @@ export default function SubmitContract() {
       </div>
 
       <form onSubmit={submit} className="space-y-6">
+        <Card className="border-slate-200 shadow-sm bg-white p-6 ring-1 ring-teal-100">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-heading font-bold text-slate-900">Langkah 1 — Unggah Draft PKS (.docx)</h3>
+              <p className="text-xs text-slate-500 mt-1">Unggah lebih dulu agar metadata terisi otomatis. Field bertanda <span className="font-semibold text-amber-700">✨ AUTO</span> tetap bisa diedit manual.</p>
+            </div>
+            {autofilling && <span className="text-xs text-teal-700 font-semibold inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Mengekstrak metadata...</span>}
+          </div>
+          <div
+            data-testid="dropzone"
+            onDragOver={(e)=>{e.preventDefault(); setDrag(true);}}
+            onDragLeave={()=>setDrag(false)}
+            onDrop={onDrop}
+            onClick={()=>inputRef.current?.click()}
+            className={`rounded-xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${drag ? "dropzone-active" : "border-slate-300 hover:border-teal-500 hover:bg-teal-50/30"}`}
+          >
+            {file ? (
+              <div className="flex flex-col items-center">
+                <FileCheck className="h-10 w-10 text-teal-600 mb-2" />
+                <p className="text-sm font-semibold text-slate-900">{file.name}</p>
+                <p className="text-xs text-slate-500 mt-1">{(file.size/1024).toFixed(1)} KB · siap diunggah</p>
+                <button type="button" onClick={(e)=>{e.stopPropagation(); setFile(null);}} className="mt-3 text-xs text-rose-600 hover:underline">Hapus</button>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center">
+                <UploadCloud className="h-10 w-10 text-slate-400 mb-2" />
+                <p className="text-sm font-medium text-slate-700">Tarik & lepas file <span className="font-mono text-teal-700">.docx</span> di sini</p>
+                <p className="text-xs text-slate-500 mt-1">atau klik untuk memilih file</p>
+              </div>
+            )}
+            <input ref={inputRef} type="file" accept=".docx" hidden onChange={(e)=>{ const f=e.target.files?.[0]; handleFile(f); }} />
+          </div>
+        </Card>
+
         <Card className="border-slate-200 shadow-sm bg-white p-6">
-          <h3 className="font-heading font-bold text-slate-900 mb-4">Informasi Mitra</h3>
+          <h3 className="font-heading font-bold text-slate-900 mb-4">Langkah 2 — Informasi Mitra</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label="Nomor Referensi PKS (dari draft)" className="md:col-span-2" autoFilled={autoFilled.has("reference_number")}>
               <Input data-testid="f-ref-number" placeholder="Terisi otomatis dari draft, atau isi manual (contoh: 03/xxx/PKS/BSI MASLAHAT)"
@@ -220,7 +254,7 @@ export default function SubmitContract() {
         </Card>
 
         <Card className="border-slate-200 shadow-sm bg-white p-6">
-          <h3 className="font-heading font-bold text-slate-900 mb-4">Detail Kerja Sama</h3>
+          <h3 className="font-heading font-bold text-slate-900 mb-4">Langkah 3 — Detail Kerja Sama</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label="Judul PKS" required className="md:col-span-2" autoFilled={autoFilled.has("agreement_title")}>
               <Input data-testid="f-title" required value={form.agreement_title} onChange={(e)=>set("agreement_title", e.target.value)} />
@@ -251,35 +285,16 @@ export default function SubmitContract() {
           </div>
         </Card>
 
-        <Card className="border-slate-200 shadow-sm bg-white p-6">
+        <Card className="border-slate-200 shadow-sm bg-white p-6" style={{display:'none'}}>
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-heading font-bold text-slate-900">Draft PKS (.docx)</h3>
             {autofilling && <span className="text-xs text-teal-700 font-semibold inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Mengekstrak metadata...</span>}
           </div>
           <div
-            data-testid="dropzone"
-            onDragOver={(e)=>{e.preventDefault(); setDrag(true);}}
-            onDragLeave={()=>setDrag(false)}
-            onDrop={onDrop}
-            onClick={()=>inputRef.current?.click()}
-            className={`rounded-xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${drag ? "dropzone-active" : "border-slate-300 hover:border-teal-500 hover:bg-teal-50/30"}`}
-          >
-            {file ? (
-              <div className="flex flex-col items-center">
-                <FileCheck className="h-10 w-10 text-teal-600 mb-2" />
-                <p className="text-sm font-semibold text-slate-900">{file.name}</p>
-                <p className="text-xs text-slate-500 mt-1">{(file.size/1024).toFixed(1)} KB · siap diunggah</p>
-                <button type="button" onClick={(e)=>{e.stopPropagation(); setFile(null);}} className="mt-3 text-xs text-rose-600 hover:underline">Hapus</button>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center">
-                <UploadCloud className="h-10 w-10 text-slate-400 mb-2" />
-                <p className="text-sm font-medium text-slate-700">Tarik & lepas file <span className="font-mono text-teal-700">.docx</span> di sini</p>
-                <p className="text-xs text-slate-500 mt-1">atau klik untuk memilih file</p>
-              </div>
-            )}
-            <input ref={inputRef} type="file" accept=".docx" hidden onChange={(e)=>{ const f=e.target.files?.[0]; handleFile(f); }} />
-          </div>
+            data-testid="dropzone-legacy"
+            onDragOver={(e)=>{e.preventDefault();}}
+            className={`rounded-xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors border-slate-300`}
+          />
         </Card>
 
         <div className="flex justify-end gap-3">

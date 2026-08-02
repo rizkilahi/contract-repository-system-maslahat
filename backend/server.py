@@ -309,6 +309,12 @@ async def seed_users():
             await db.users.update_one({"email": e}, {"$set": {"business_unit_id": u.get("business_unit_id")}})
 
 async def seed_sample_contracts():
+    # Backfill reference_number for existing seeded contracts that don't have one (idempotent).
+    async for existing in db.contracts.find({"$or": [{"reference_number": None}, {"reference_number": ""}, {"reference_number": {"$exists": False}}]}, {"_id": 0, "id": 1}):
+        seq = await db.contracts.count_documents({"reference_number": {"$exists": True, "$nin": [None, ""]}})
+        ref = f"{(seq+1):02d}/{((seq+1)*17 % 900 + 100):03d}/PKS/BSI MASLAHAT/2026"
+        await db.contracts.update_one({"id": existing["id"]}, {"$set": {"reference_number": ref}})
+
     if await db.contracts.count_documents({}) > 0:
         # Ensure at least one submitted_for_review sample exists for the new filter option.
         if not await db.contracts.find_one({"status": "submitted_for_review"}):
@@ -329,7 +335,7 @@ async def seed_sample_contracts():
                     "effective_date": eff.isoformat(), "expiry_date": exp.isoformat(),
                     "owning_bu": "Pendidikan", "bu_pic_name": bu["name"], "bu_pic_id": bu["id"],
                     "business_unit_id": "Pendidikan",
-                    "reference_number": "04/PKS-2026/BSI MASLAHAT",
+                    "reference_number": "04/001/PKS/BSI MASLAHAT/2026",
                     "remarks": "Menunggu Legal untuk mulai review", "status": "submitted_for_review",
                     "versions": [], "created_at": now_iso(), "updated_at": now_iso(),
                 })

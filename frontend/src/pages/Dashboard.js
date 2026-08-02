@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle2, Clock, TriangleAlert, XCircle, Search, Eye, Filter } from "lucide-react";
+import { CheckCircle2, Clock, TriangleAlert, XCircle, Search, Eye, Filter, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 
@@ -38,7 +38,34 @@ export default function Dashboard() {
   const [meta, setMeta] = useState({ institution_types: [], owning_bus: [], statuses: [] });
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [sortBy, setSortBy] = useState("contract_id_display");
+  const [sortDir, setSortDir] = useState("asc");
   const nav = useNavigate();
+
+  const toggleSort = (key) => {
+    if (sortBy === key) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(key);
+      setSortDir("asc");
+    }
+  };
+
+  const SortHeader = ({ label, sortKey, testid }) => {
+    const active = sortBy === sortKey;
+    const Icon = active ? (sortDir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+    return (
+      <button
+        data-testid={testid}
+        type="button"
+        onClick={() => toggleSort(sortKey)}
+        className={`flex items-center gap-1.5 text-xs font-semibold hover:text-teal-700 transition-colors ${active ? "text-teal-700" : "text-slate-600"}`}
+      >
+        {label}
+        <Icon className={`h-3.5 w-3.5 ${active ? "opacity-100" : "opacity-40"}`} strokeWidth={2.5} />
+      </button>
+    );
+  };
 
   const loadAll = async () => {
     try {
@@ -59,18 +86,37 @@ export default function Dashboard() {
   // Client-side filtering — instant, no reload
   const filteredRows = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return rows.filter(r => {
+    const filtered = rows.filter(r => {
       const cur = r.derived_status || r.status;
       if (status !== "all" && cur !== status) return false;
       if (itype !== "all" && r.institution_type !== itype) return false;
       if (obu !== "all" && r.owning_bu !== obu) return false;
       if (term) {
-        const hay = [r.contract_id, r.partner_name, r.agreement_title].filter(Boolean).join(" ").toLowerCase();
+        const hay = [r.contract_id, r.reference_number, r.partner_name, r.agreement_title].filter(Boolean).join(" ").toLowerCase();
         if (!hay.includes(term)) return false;
       }
       return true;
     });
-  }, [rows, q, status, itype, obu]);
+    // Sorting — column click cycles asc/desc
+    const dir = sortDir === "asc" ? 1 : -1;
+    const cmp = (a, b) => {
+      let av, bv;
+      if (sortBy === "contract_id_display") {
+        av = (a.reference_number || a.contract_id || "").toString().toLowerCase();
+        bv = (b.reference_number || b.contract_id || "").toString().toLowerCase();
+      } else if (sortBy === "effective_date" || sortBy === "expiry_date") {
+        av = a[sortBy] || "";
+        bv = b[sortBy] || "";
+      } else {
+        av = a[sortBy] || "";
+        bv = b[sortBy] || "";
+      }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    };
+    return [...filtered].sort(cmp);
+  }, [rows, q, status, itype, obu, sortBy, sortDir]);
 
   return (
     <div className="space-y-8">
@@ -152,11 +198,17 @@ export default function Dashboard() {
           <Table>
             <TableHeader className="bg-slate-50">
               <TableRow>
-                <TableHead className="text-xs font-semibold text-slate-600">Contract ID</TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600">
+                  <SortHeader label="Contract ID" sortKey="contract_id_display" testid="sort-contract-id" />
+                </TableHead>
                 <TableHead className="text-xs font-semibold text-slate-600">Partner Name</TableHead>
                 <TableHead className="text-xs font-semibold text-slate-600 min-w-[220px]">Agreement Title</TableHead>
-                <TableHead className="text-xs font-semibold text-slate-600">Effective Date</TableHead>
-                <TableHead className="text-xs font-semibold text-slate-600">Expiry Date</TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600">
+                  <SortHeader label="Effective Date" sortKey="effective_date" testid="sort-effective" />
+                </TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600">
+                  <SortHeader label="Expiry Date" sortKey="expiry_date" testid="sort-expiry" />
+                </TableHead>
                 <TableHead className="text-xs font-semibold text-slate-600">Contract Status</TableHead>
                 <TableHead className="text-xs font-semibold text-slate-600 text-right">Action</TableHead>
               </TableRow>
@@ -175,7 +227,9 @@ export default function Dashboard() {
               )}
               {filteredRows.map((r) => (
                 <TableRow key={r.id} className="text-sm hover:bg-slate-50/60" data-testid={`contract-row-${r.contract_id}`}>
-                  <TableCell className="font-mono text-xs font-semibold text-teal-700">{r.contract_id}</TableCell>
+                  <TableCell className="font-mono text-xs font-semibold text-teal-700" data-testid={`row-cid-${r.contract_id}`} title={r.contract_id}>
+                    {r.reference_number || r.contract_id}
+                  </TableCell>
                   <TableCell className="font-medium max-w-[180px] truncate" title={r.partner_name}>{r.partner_name}</TableCell>
                   <TableCell className="max-w-[280px] truncate" title={r.agreement_title}>{r.agreement_title}</TableCell>
                   <TableCell className="text-xs">{fmtDate(r.effective_date)}</TableCell>
