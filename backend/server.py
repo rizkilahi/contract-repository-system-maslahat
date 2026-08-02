@@ -1,89 +1,573 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+import os
+import uuid
+import logging
+import requests
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Literal
 
-# Create the main app without a prefix
-app = FastAPI()
+import bcrypt
+import jwt
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Response, Query, Header
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+# ---------- Config ----------
+MONGO_URL = os.environ['MONGO_URL']
+DB_NAME = os.environ['DB_NAME']
+JWT_SECRET = os.environ['JWT_SECRET']
+JWT_ALGORITHM = "HS256"
+JWT_EXP_HOURS = 12
+APP_NAME = os.environ.get('APP_NAME', 'crs-maslahat')
+EMERGENT_KEY = os.environ.get('EMERGENT_LLM_KEY')
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
 
+# ---------- Roles ----------
+Role = Literal["admin", "business_unit", "legal_officer", "management"]
+INSTITUTION_TYPES = ["Yayasan", "Perusahaan (PT)", "Koperasi", "Instansi Pemerintah", "Perorangan"]
+OWNING_BUS = ["ZISWAF", "Community Development", "Corporate Partnership", "Program Sosial", "Pendidikan"]
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+STATUS_FLOW = [
+    "drafting",
+    "under_legal_review",
+    "revision_required",
+    "ready_for_signature",
+    "pending_final_verification",
+    "signed_active",
+    "expired",
+]
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+# ---------- App ----------
+app = FastAPI(title="CRS Maslahat API")
+api = APIRouter(prefix="/api")
+security = HTTPBearer(auto_error=False)
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("crs")
+
+# ---------- Storage helpers ----------
+_storage_key: Optional[str] = None
+
+def init_storage() -> Optional[str]:
+    global _storage_key
+    if _storage_key:
+        return _storage_key
+    try:
+        resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=30)
+        resp.raise_for_status()
+        _storage_key = resp.json()["storage_key"]
+        return _storage_key
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
+        return None
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    if not key:
+        raise HTTPException(500, "Storage unavailable")
+    resp = requests.put(f"{STORAGE_URL}/objects/{path}",
+                        headers={"X-Storage-Key": key, "Content-Type": content_type},
+                        data=data, timeout=120)
+    if resp.status_code == 403:
+        # refresh key
+        globals()['_storage_key'] = None
+        key = init_storage()
+        resp = requests.put(f"{STORAGE_URL}/objects/{path}",
+                            headers={"X-Storage-Key": key, "Content-Type": content_type},
+                            data=data, timeout=120)
+    resp.raise_for_status()
+    return resp.json()
+
+def get_object(path: str):
+    key = init_storage()
+    if not key:
+        raise HTTPException(500, "Storage unavailable")
+    resp = requests.get(f"{STORAGE_URL}/objects/{path}",
+                        headers={"X-Storage-Key": key}, timeout=60)
+    if resp.status_code == 403:
+        globals()['_storage_key'] = None
+        key = init_storage()
+        resp = requests.get(f"{STORAGE_URL}/objects/{path}",
+                            headers={"X-Storage-Key": key}, timeout=60)
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+# ---------- Password + JWT ----------
+def hash_password(p: str) -> str:
+    return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(p: str, h: str) -> bool:
+    try:
+        return bcrypt.checkpw(p.encode(), h.encode())
+    except Exception:
+        return False
+
+def create_access_token(user_id: str, email: str, role: str) -> str:
+    payload = {
+        "sub": user_id, "email": email, "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXP_HOURS),
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    if not creds or not creds.credentials:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid token")
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(401, "User not found")
+    return user
+
+def require_roles(*roles: str):
+    async def _check(user: dict = Depends(get_current_user)):
+        if user["role"] not in roles and user["role"] != "admin":
+            raise HTTPException(403, f"Requires role: {roles}")
+        return user
+    return _check
+
+# ---------- Models ----------
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserOut(BaseModel):
+    id: str
+    email: EmailStr
+    name: str
+    role: str
+
+class ContractIn(BaseModel):
+    partner_name: str
+    partner_pic_name: str
+    partner_pic_phone: str
+    partner_pic_email: EmailStr
+    institution_type: str
+    agreement_title: str
+    contract_value: float = 0.0
+    effective_date: str  # YYYY-MM-DD
+    expiry_date: str
+    owning_bu: str
+    bu_pic_name: str
+    remarks: Optional[str] = ""
+
+class StatusUpdate(BaseModel):
+    status: str
+    remarks: Optional[str] = ""
+
+# ---------- Utils ----------
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def gen_contract_id() -> str:
+    yr = datetime.now(timezone.utc).year
+    return f"PKS-{yr}-{uuid.uuid4().hex[:6].upper()}"
+
+async def add_audit(contract_id: str, user: dict, action: str, detail: str = ""):
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "contract_id": contract_id,
+        "user_id": user["id"],
+        "user_name": user["name"],
+        "user_role": user["role"],
+        "action": action,
+        "detail": detail,
+        "created_at": now_iso(),
+    })
+
+def compute_derived_status(c: dict) -> str:
+    base = c.get("status", "drafting")
+    if base == "signed_active":
+        try:
+            exp = datetime.fromisoformat(c["expiry_date"])
+            days = (exp.date() - datetime.now(timezone.utc).date()).days
+            if days < 0:
+                return "expired"
+            if days <= 60:
+                return "expiring_soon"
+        except Exception:
+            pass
+    return base
+
+def strip_id(doc):
+    doc.pop("_id", None)
+    return doc
+
+# ---------- Seed ----------
+DEMO_USERS = [
+    {"email": "bu@bsimaslahat.co.id", "name": "Ahmad Faizal (Business Unit)", "role": "business_unit", "password": "Demo@2026"},
+    {"email": "legal@bsimaslahat.co.id", "name": "Siti Rahmawati (Legal Officer)", "role": "legal_officer", "password": "Demo@2026"},
+    {"email": "management@bsimaslahat.co.id", "name": "Budi Santoso (Manajemen)", "role": "management", "password": "Demo@2026"},
+]
+
+async def seed_users():
+    admin_email = os.environ["ADMIN_EMAIL"].lower()
+    admin_pw = os.environ["ADMIN_PASSWORD"]
+    admin_name = os.environ.get("ADMIN_NAME", "Admin CRS")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()),
+            "email": admin_email, "name": admin_name, "role": "admin",
+            "password_hash": hash_password(admin_pw), "created_at": now_iso(),
+        })
+    else:
+        if not verify_password(admin_pw, existing["password_hash"]):
+            await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_pw)}})
+    for u in DEMO_USERS:
+        e = u["email"].lower()
+        if not await db.users.find_one({"email": e}):
+            await db.users.insert_one({
+                "id": str(uuid.uuid4()),
+                "email": e, "name": u["name"], "role": u["role"],
+                "password_hash": hash_password(u["password"]), "created_at": now_iso(),
+            })
+
+async def seed_sample_contracts():
+    if await db.contracts.count_documents({}) > 0:
+        return
+    bu = await db.users.find_one({"role": "business_unit"})
+    if not bu:
+        return
+    samples = [
+        ("Yayasan Rumah Zakat", "Yayasan", "PKS Program ZISWAF - Distribusi Bantuan Sosial", "signed_active", "ZISWAF", 250_000_000, 45),
+        ("PT Berkah Sejahtera", "Perusahaan (PT)", "Kerjasama Corporate CSR Pendidikan", "signed_active", "Pendidikan", 500_000_000, 200),
+        ("Koperasi Mitra Ummat", "Koperasi", "Pembiayaan Mikro Anggota Koperasi", "pending_final_verification", "Community Development", 750_000_000, 300),
+        ("Yayasan Pendidikan Al-Amanah", "Yayasan", "Beasiswa Santri Berprestasi 2026", "under_legal_review", "Pendidikan", 180_000_000, 365),
+        ("PT Halal Logistik Indonesia", "Perusahaan (PT)", "Distribusi Logistik Bantuan Kemanusiaan", "signed_active", "Program Sosial", 320_000_000, 25),
+        ("Dinas Sosial Provinsi Jabar", "Instansi Pemerintah", "Sinergi Program Pengentasan Kemiskinan", "drafting", "Program Sosial", 0, 400),
+        ("Yayasan Panti Asuhan Nurul Iman", "Yayasan", "Program Ramadhan Berbagi 2026", "signed_active", "ZISWAF", 95_000_000, -10),
+        ("PT Fintech Syariah Nusantara", "Perusahaan (PT)", "Integrasi Pembayaran Zakat Digital", "revision_required", "Corporate Partnership", 420_000_000, 500),
+        ("Ustadz Ahmad Hidayat", "Perorangan", "Program Dai Ambassador BSI Maslahat", "ready_for_signature", "Pendidikan", 60_000_000, 730),
+        ("Yayasan Rumah Yatim Indonesia", "Yayasan", "Program Ekonomi Keluarga Yatim", "signed_active", "Community Development", 275_000_000, 90),
+    ]
+    for i, (partner, itype, title, status, obu, val, days_to_exp) in enumerate(samples):
+        eff = datetime.now(timezone.utc).date()
+        exp = eff + timedelta(days=days_to_exp)
+        cid = gen_contract_id()
+        doc = {
+            "id": str(uuid.uuid4()),
+            "contract_id": cid,
+            "partner_name": partner,
+            "partner_pic_name": f"PIC Mitra {i+1}",
+            "partner_pic_phone": f"+62812{1000000+i*137}",
+            "partner_pic_email": f"pic{i+1}@partner.id",
+            "institution_type": itype,
+            "agreement_title": title,
+            "contract_value": val,
+            "effective_date": eff.isoformat(),
+            "expiry_date": exp.isoformat(),
+            "owning_bu": obu,
+            "bu_pic_name": bu["name"],
+            "bu_pic_id": bu["id"],
+            "remarks": "",
+            "status": status,
+            "versions": [],
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        await db.contracts.insert_one(doc)
+        await db.audit_logs.insert_one({
+            "id": str(uuid.uuid4()), "contract_id": doc["id"],
+            "user_id": bu["id"], "user_name": bu["name"], "user_role": "business_unit",
+            "action": "CONTRACT_CREATED", "detail": f"Kontrak {cid} dibuat", "created_at": now_iso(),
+        })
+
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.contracts.create_index("contract_id", unique=True)
+    await db.audit_logs.create_index("contract_id")
+    await seed_users()
+    await seed_sample_contracts()
+    init_storage()
+    # Write test_credentials
+    try:
+        os.makedirs("/app/memory", exist_ok=True)
+        with open("/app/memory/test_credentials.md", "w") as f:
+            f.write("# CRS Maslahat Test Credentials\n\n")
+            f.write("## Admin (Real Owner)\n")
+            f.write(f"- Email: `{os.environ['ADMIN_EMAIL']}`\n")
+            f.write(f"- Password: `{os.environ['ADMIN_PASSWORD']}`\n")
+            f.write(f"- Role: `admin` (full access)\n\n")
+            f.write("## Demo Users (all password: `Demo@2026`)\n")
+            for u in DEMO_USERS:
+                f.write(f"- **{u['role']}** — `{u['email']}` / `Demo@2026` — {u['name']}\n")
+            f.write("\n## Endpoints\n- POST /api/auth/login\n- GET /api/auth/me\n- GET /api/contracts\n- POST /api/contracts (business_unit)\n- GET /api/contracts/{id}\n- PATCH /api/contracts/{id}/status\n- POST /api/contracts/{id}/versions (multipart)\n- GET /api/files/{file_id} (auth via ?token=)\n- GET /api/dashboard/stats\n- GET /api/guidelines/{institution_type}\n")
+    except Exception as e:
+        logger.warning(f"Could not write test_credentials: {e}")
+
+# ---------- Auth endpoints ----------
+@api.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"app": "CRS Maslahat", "status": "ok"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
+@api.post("/auth/login")
+async def login(body: LoginIn):
+    user = await db.users.find_one({"email": body.email.lower()})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(401, "Email atau password salah")
+    token = create_access_token(user["id"], user["email"], user["role"])
+    return {
+        "token": token,
+        "user": {"id": user["id"], "email": user["email"], "name": user["name"], "role": user["role"]},
+    }
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+@api.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return user
 
-# Include the router in the main app
-app.include_router(api_router)
+# ---------- Legal Guidelines ----------
+GUIDELINES = {
+    "Yayasan": [
+        {"doc": "Akta Pendirian", "kategori": "Wajib", "cp": "YA",
+         "risiko": "PKS batal demi hukum jika yayasan bukan entitas berbadan hukum.",
+         "solusi": "Tunda PKS hingga akta terbit dan diverifikasi notaris."},
+        {"doc": "SK Pengesahan Kemenkumham (AHU)", "kategori": "Wajib", "cp": "YA",
+         "risiko": "Yayasan tidak memiliki legal standing di depan hukum.",
+         "solusi": "Cek registrasi resmi via AHU Online sebelum lanjut."},
+        {"doc": "AD/ART", "kategori": "Wajib", "cp": "TIDAK",
+         "risiko": "Ruang lingkup kewenangan pengurus tidak jelas.",
+         "solusi": "Sertakan salinan AD/ART terbaru yang telah disahkan."},
+        {"doc": "SK Pengurus", "kategori": "Wajib (Bisa Disubstitusi)", "cp": "YA",
+         "risiko": "Penandatangan tidak berwenang mewakili yayasan.",
+         "solusi": "Substitusi dengan Berita Acara Rapat Pengurus yang sah."},
+    ],
+    "Perusahaan (PT)": [
+        {"doc": "Akta Pendirian PT", "kategori": "Wajib", "cp": "YA",
+         "risiko": "PT tidak sah sebagai badan hukum.", "solusi": "Verifikasi via AHU Online."},
+        {"doc": "SK Kemenkumham", "kategori": "Wajib", "cp": "YA",
+         "risiko": "PT belum berstatus badan hukum resmi.", "solusi": "Minta salinan SK terbaru."},
+        {"doc": "NPWP Perusahaan", "kategori": "Wajib", "cp": "TIDAK",
+         "risiko": "Kewajiban pajak tidak jelas.", "solusi": "Minta NPWP + SKT."},
+        {"doc": "NIB (OSS)", "kategori": "Wajib", "cp": "YA",
+         "risiko": "Kegiatan usaha tidak terdaftar resmi.", "solusi": "Verifikasi NIB via OSS."},
+    ],
+    "Koperasi": [
+        {"doc": "Akta Pendirian Koperasi", "kategori": "Wajib", "cp": "YA",
+         "risiko": "Koperasi belum sah secara hukum.", "solusi": "Verifikasi ke Kemenkop UKM."},
+        {"doc": "SK Menteri Koperasi", "kategori": "Wajib", "cp": "YA",
+         "risiko": "Legal standing koperasi meragukan.", "solusi": "Cek registri resmi."},
+        {"doc": "AD/ART Koperasi", "kategori": "Wajib", "cp": "TIDAK",
+         "risiko": "Struktur & kewenangan tidak jelas.", "solusi": "Sertakan salinan lengkap."},
+    ],
+    "Instansi Pemerintah": [
+        {"doc": "Surat Kuasa/SK Penunjukan", "kategori": "Wajib", "cp": "YA",
+         "risiko": "Pejabat tidak berwenang menandatangani.", "solusi": "Verifikasi SK & jabatan."},
+        {"doc": "DIPA/Anggaran", "kategori": "Wajib", "cp": "TIDAK",
+         "risiko": "Kewajiban pembayaran tidak dijamin.", "solusi": "Minta salinan alokasi anggaran."},
+    ],
+    "Perorangan": [
+        {"doc": "KTP", "kategori": "Wajib", "cp": "YA",
+         "risiko": "Identitas pihak tidak terverifikasi.", "solusi": "Verifikasi via Dukcapil bila perlu."},
+        {"doc": "NPWP", "kategori": "Wajib (Bisa Disubstitusi)", "cp": "TIDAK",
+         "risiko": "Kewajiban pajak tidak jelas.", "solusi": "Substitusi dengan surat pernyataan."},
+    ],
+}
+
+@api.get("/guidelines")
+async def all_guidelines():
+    return GUIDELINES
+
+@api.get("/guidelines/{itype}")
+async def get_guidelines(itype: str):
+    return {"institution_type": itype, "items": GUIDELINES.get(itype, [])}
+
+@api.get("/meta/options")
+async def meta_options():
+    return {
+        "institution_types": INSTITUTION_TYPES,
+        "owning_bus": OWNING_BUS,
+        "statuses": STATUS_FLOW,
+    }
+
+# ---------- Contracts ----------
+@api.get("/contracts")
+async def list_contracts(
+    q: Optional[str] = None,
+    institution_type: Optional[str] = None,
+    owning_bu: Optional[str] = None,
+    status: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    query = {}
+    if institution_type and institution_type != "all":
+        query["institution_type"] = institution_type
+    if owning_bu and owning_bu != "all":
+        query["owning_bu"] = owning_bu
+    if status and status != "all":
+        query["status"] = status
+    if q:
+        query["$or"] = [
+            {"contract_id": {"$regex": q, "$options": "i"}},
+            {"partner_name": {"$regex": q, "$options": "i"}},
+            {"agreement_title": {"$regex": q, "$options": "i"}},
+        ]
+    docs = await db.contracts.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    for d in docs:
+        d["derived_status"] = compute_derived_status(d)
+    return docs
+
+@api.get("/dashboard/stats")
+async def dashboard_stats(user: dict = Depends(get_current_user)):
+    docs = await db.contracts.find({}, {"_id": 0}).to_list(1000)
+    total_active = 0
+    pending = 0
+    expiring = 0
+    expired = 0
+    for d in docs:
+        ds = compute_derived_status(d)
+        if ds == "signed_active":
+            total_active += 1
+        elif ds == "expiring_soon":
+            expiring += 1
+            total_active += 1
+        elif ds == "expired":
+            expired += 1
+        if ds == "pending_final_verification":
+            pending += 1
+    return {"total_active": total_active, "pending_verification": pending, "expiring_soon": expiring, "expired": expired}
+
+@api.post("/contracts")
+async def create_contract(body: ContractIn, user: dict = Depends(require_roles("business_unit"))):
+    cid = gen_contract_id()
+    doc = body.model_dump()
+    doc.update({
+        "id": str(uuid.uuid4()),
+        "contract_id": cid,
+        "bu_pic_id": user["id"],
+        "status": "drafting",
+        "versions": [],
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    })
+    await db.contracts.insert_one(doc)
+    await add_audit(doc["id"], user, "CONTRACT_CREATED", f"Kontrak {cid} dibuat")
+    return strip_id(doc)
+
+@api.get("/contracts/{cid}")
+async def get_contract(cid: str, user: dict = Depends(get_current_user)):
+    doc = await db.contracts.find_one({"id": cid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Kontrak tidak ditemukan")
+    doc["derived_status"] = compute_derived_status(doc)
+    return doc
+
+@api.get("/contracts/{cid}/audit")
+async def get_audit(cid: str, user: dict = Depends(get_current_user)):
+    logs = await db.audit_logs.find({"contract_id": cid}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return logs
+
+@api.patch("/contracts/{cid}/status")
+async def update_status(cid: str, body: StatusUpdate, user: dict = Depends(get_current_user)):
+    doc = await db.contracts.find_one({"id": cid})
+    if not doc:
+        raise HTTPException(404, "Kontrak tidak ditemukan")
+    new_status = body.status
+    # role guard
+    if user["role"] not in ("admin", "legal_officer", "business_unit"):
+        raise HTTPException(403, "Tidak diperbolehkan mengubah status")
+    if new_status not in STATUS_FLOW:
+        raise HTTPException(400, "Status tidak valid")
+    await db.contracts.update_one({"id": cid}, {"$set": {"status": new_status, "updated_at": now_iso()}})
+    await add_audit(cid, user, "STATUS_CHANGED", f"Status diubah menjadi {new_status}. {body.remarks or ''}")
+    return {"ok": True, "status": new_status}
+
+# ---------- File upload / versions ----------
+@api.post("/contracts/{cid}/versions")
+async def upload_version(
+    cid: str,
+    file: UploadFile = File(...),
+    remarks: str = Form(""),
+    version_label: str = Form(""),
+    user: dict = Depends(get_current_user),
+):
+    doc = await db.contracts.find_one({"id": cid})
+    if not doc:
+        raise HTTPException(404, "Kontrak tidak ditemukan")
+    ext = (file.filename.split(".")[-1] if "." in file.filename else "bin").lower()
+    file_id = str(uuid.uuid4())
+    path = f"{APP_NAME}/contracts/{cid}/{file_id}.{ext}"
+    data = await file.read()
+    ct = file.content_type or "application/octet-stream"
+    put_object(path, data, ct)
+    # Version numbering: v1.0, v1.1 ...
+    existing = doc.get("versions", [])
+    next_ver = version_label or f"v1.{len(existing)}"
+    file_record = {
+        "id": file_id,
+        "version": next_ver,
+        "storage_path": path,
+        "original_filename": file.filename,
+        "content_type": ct,
+        "size": len(data),
+        "uploader_id": user["id"],
+        "uploader_name": user["name"],
+        "uploaded_at": now_iso(),
+        "remarks": remarks,
+    }
+    await db.files.insert_one({**file_record, "contract_id": cid, "is_deleted": False})
+    await db.contracts.update_one({"id": cid}, {"$push": {"versions": file_record}, "$set": {"updated_at": now_iso()}})
+    await add_audit(cid, user, "VERSION_UPLOADED", f"Upload {next_ver}: {file.filename}")
+    return file_record
+
+@api.get("/files/{file_id}")
+async def download_file(file_id: str, token: Optional[str] = Query(None), authorization: Optional[str] = Header(None)):
+    # Manual auth (support ?token= for direct browser download links)
+    raw = None
+    if authorization and authorization.startswith("Bearer "):
+        raw = authorization[7:]
+    elif token:
+        raw = token
+    if not raw:
+        raise HTTPException(401, "Auth required")
+    try:
+        jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+    rec = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "File tidak ditemukan")
+    data, ct = get_object(rec["storage_path"])
+    from starlette.responses import Response as StarletteResponse
+    return StarletteResponse(
+        content=data,
+        media_type=rec.get("content_type") or ct,
+        headers={"Content-Disposition": f'attachment; filename="{rec["original_filename"]}"'}
+    )
+
+# ---------- Users (admin) ----------
+@api.get("/users")
+async def list_users(user: dict = Depends(require_roles("admin"))):
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(500)
+    return users
+
+# ---------- Mount ----------
+app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
     allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown():
     client.close()

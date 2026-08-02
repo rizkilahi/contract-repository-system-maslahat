@@ -1,0 +1,42 @@
+{
+  "summary": "First-finish smoke test of CRS Maslahat. Backend auth + core endpoints healthy (all 4 roles login, /api/auth/me, /api/dashboard/stats, /api/contracts return valid JSON; 10 seeded contracts). Frontend: login, admin dashboard KPIs, repository table, detail Sheet with Metadata/Versi/Audit tabs, role-based sidebar (legal_officer hides nav-submit, admin+business_unit show it), logout, submit form load, Panduan Legal modal with Wajib/Risiko/Solusi matrix, and both FABs (fab-report, fab-help) all render correctly. File-upload flows (docx submit, signed PDF) and Legal status transitions (Setujui / Minta Revisi) not exercised in this pass and are deferred to full QA.",
+  "tested_scope": ["frontend", "backend", "auth", "integration"],
+  "passed": [
+    "Backend: admin/business_unit/legal_officer login returns JWT (field name is 'token')",
+    "Backend: GET /api/auth/me returns admin profile with role='admin'",
+    "Backend: GET /api/dashboard/stats returns {total_active, pending_verification, expiring_soon, expired}",
+    "Backend: GET /api/contracts returns 10 seeded contracts with expected fields (contract_id, partner_name, institution_type, status, etc.)",
+    "Backend: GET /api/guidelines/{itype} responds 200",
+    "Frontend: /login page loads with all demo buttons and login form",
+    "Frontend: admin login redirects to dashboard, KPI cards render for all 4 metrics",
+    "Frontend: repository table renders 10 rows (view-{id} buttons present)",
+    "Frontend: contract detail Sheet opens; tab-metadata, tab-versions, tab-audit all switch",
+    "Frontend: fab-report and fab-help visible on authenticated pages",
+    "Frontend: role-based sidebar — legal_officer does NOT see nav-submit (count=0); admin & business_unit DO see nav-submit",
+    "Frontend: logout via user-menu-trigger + logout-btn clears session and redirects to /login",
+    "Frontend: /submit form loads with all f-* fields for business_unit",
+    "Frontend: Panduan Legal modal opens showing full matrix (Nama Dokumen / Kategori / Syarat Mutlak / Risiko / Solusi) for the selected institution type (Yayasan)"
+  ],
+  "failed": [
+    {
+      "area": "frontend / search filter",
+      "issue": "Typing 'Yayasan' in search-input did not reduce row count (still 10). Either all 10 seeded contracts contain the term or the search filter is not applying. Needs deeper verification in full QA.",
+      "evidence": "search rows before=10, after 'Yayasan'=10",
+      "priority": "LOW"
+    },
+    {
+      "area": "frontend / a11y",
+      "issue": "Radix DialogContent missing DialogTitle warning in console for Panduan Legal modal (accessibility only, not functional).",
+      "evidence": "CON[error]: `DialogContent` requires a `DialogTitle` for the component to be accessible for screen reader users.",
+      "priority": "LOW"
+    }
+  ],
+  "action_items": [
+    "Verify search-input actually filters the contracts list (likely all seeded contracts matched 'Yayasan'; try a distinctive term to confirm)",
+    "(Optional) Add a visually hidden DialogTitle to the Panduan Legal Dialog to silence a11y warning",
+    "Full QA pass should still exercise: docx upload during PKS submission, Legal Officer approval/revision transitions on under_legal_review contract, signed PDF upload on ready_for_signature contract, download via /api/files/{id}?token=, admin /users page, and management role dashboard"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}
