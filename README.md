@@ -68,8 +68,10 @@ Sebelumnya siklus PKS BSI Maslahat masih dikelola manual via email, folder share
 |------|---------------|-----|
 | Python | 3.11+ | `python --version` |
 | Node.js | 20+ | `node --version` |
-| Yarn | 1.22+ (**wajib**, bukan npm) | `yarn --version` |
-| MongoDB | 6+ (local atau Atlas) | `mongod --version` |
+| Yarn | 1.22+ (**wajib**, jika belum ada: `npm install -g yarn`) | `yarn --version` |
+| MongoDB | 6+ (Harus sudah **berjalan** di local atau Atlas) | `mongod --version` |
+
+> 💡 **Info MongoDB:** Jika menggunakan Windows dan belum terinstal, unduh installer dari [MongoDB Community Server](https://www.mongodb.com/try/download/community). Jika Anda menggunakan MongoDB Atlas, cukup sesuaikan `MONGO_URL` di file `.env`.
 
 ### 2️⃣ Clone & Struktur
 
@@ -88,11 +90,12 @@ cd crs-maslahat
 
 #### 📄 `backend/.env`
 ```dotenv
+# Ganti dengan URL MongoDB Atlas jika tidak pakai lokal
 MONGO_URL="mongodb://localhost:27017"
 DB_NAME="crs_maslahat"
 CORS_ORIGINS="http://localhost:3000"
 
-# Ganti dengan hasil `python3 -c "import secrets; print(secrets.token_hex(32))"`
+# Ganti dengan hasil `python -c "import secrets; print(secrets.token_hex(32))"`
 JWT_SECRET="<64-hex-chars>"
 
 # Owner default — dipakai saat first startup untuk seed admin
@@ -125,7 +128,14 @@ REACT_APP_BACKEND_URL=http://localhost:8001
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
+
+# Mac/Linux:
+# source .venv/bin/activate
+# Windows Command Prompt:
+# .venv\Scripts\activate.bat
+# Windows PowerShell:
+.\.venv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
 ```
 
