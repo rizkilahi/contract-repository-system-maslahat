@@ -794,6 +794,282 @@ async def admin_run_expiry(user: dict = Depends(require_roles("admin"))):
     await _run_expiry_reminders()
     return {"ok": True}
 
+# ---------- Reports (Excel + PDF) ----------
+from starlette.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors as rl_colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm, mm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+
+STATUS_LABEL_ID = {
+    "drafting": "Drafting",
+    "under_legal_review": "Under Legal Review",
+    "revision_required": "Revision Required",
+    "ready_for_signature": "Ready for Signature",
+    "pending_final_verification": "Pending Final Verification",
+    "signed_active": "Signed & Active",
+    "expiring_soon": "Expiring Soon",
+    "expired": "Expired",
+}
+
+async def _build_report_query(institution_type: Optional[str], owning_bu: Optional[str], status: Optional[str]):
+    q = {}
+    if institution_type and institution_type != "all":
+        q["institution_type"] = institution_type
+    if owning_bu and owning_bu != "all":
+        q["owning_bu"] = owning_bu
+    if status and status != "all":
+        q["status"] = status
+    return q
+
+@api.get("/reports/portfolio.xlsx")
+async def export_xlsx(
+    token: Optional[str] = Query(None),
+    institution_type: Optional[str] = None,
+    owning_bu: Optional[str] = None,
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
+    raw = None
+    if authorization and authorization.startswith("Bearer "):
+        raw = authorization[7:]
+    elif token:
+        raw = token
+    if not raw:
+        raise HTTPException(401, "Auth required")
+    try:
+        jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+
+    q = await _build_report_query(institution_type, owning_bu, status)
+    docs = await db.contracts.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Portofolio PKS"
+
+    # Header title row
+    ws.merge_cells("A1:M1")
+    ws["A1"] = "BSI MASLAHAT — LAPORAN PORTOFOLIO PERJANJIAN KERJA SAMA"
+    ws["A1"].font = Font(bold=True, size=14, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor="0F766E")
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    ws.merge_cells("A2:M2")
+    ws["A2"] = f"Dicetak: {datetime.now(timezone.utc).strftime('%d %B %Y %H:%M UTC')}   ·   Total kontrak: {len(docs)}"
+    ws["A2"].font = Font(italic=True, size=10, color="475569")
+    ws["A2"].alignment = Alignment(horizontal="center")
+
+    headers = [
+        "No. PKS", "Mitra", "Jenis Institusi", "Judul PKS",
+        "PIC Mitra", "Telp PIC", "Email PIC",
+        "Owning BU", "PIC Business Unit",
+        "Nilai (Rp)", "Tanggal Efektif", "Tanggal Berakhir", "Status"
+    ]
+    header_fill = PatternFill("solid", fgColor="F1F5F9")
+    header_font = Font(bold=True, size=10, color="0F172A")
+    thin = Side(border_style="thin", color="CBD5E1")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=4, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+    ws.row_dimensions[4].height = 34
+
+    for i, d in enumerate(docs, start=5):
+        ds = compute_derived_status(d)
+        row = [
+            d["contract_id"], d["partner_name"], d["institution_type"], d["agreement_title"],
+            d.get("partner_pic_name", ""), d.get("partner_pic_phone", ""), d.get("partner_pic_email", ""),
+            d["owning_bu"], d.get("bu_pic_name", ""),
+            d.get("contract_value") or 0, d.get("effective_date", ""), d.get("expiry_date", ""),
+            STATUS_LABEL_ID.get(ds, ds),
+        ]
+        for col_idx, val in enumerate(row, 1):
+            c = ws.cell(row=i, column=col_idx, value=val)
+            c.font = Font(size=10)
+            c.border = border
+            c.alignment = Alignment(vertical="center", wrap_text=col_idx in (2, 4))
+            if col_idx == 10:
+                c.number_format = '"Rp"#,##0'
+        # zebra
+        if i % 2 == 0:
+            for col_idx in range(1, len(headers) + 1):
+                ws.cell(row=i, column=col_idx).fill = PatternFill("solid", fgColor="F8FAFC")
+
+    widths = [16, 30, 18, 40, 20, 16, 24, 22, 22, 18, 14, 14, 22]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    ws.freeze_panes = "A5"
+
+    # Summary sheet
+    ws2 = wb.create_sheet("Ringkasan")
+    ws2["A1"] = "Ringkasan Portofolio"
+    ws2["A1"].font = Font(bold=True, size=14, color="0F766E")
+    ws2.append([])
+    ws2.append(["Metrik", "Nilai"])
+    total_val = sum((d.get("contract_value") or 0) for d in docs)
+    by_status_summary = {}
+    by_bu_summary = {}
+    for d in docs:
+        ds = compute_derived_status(d)
+        by_status_summary[ds] = by_status_summary.get(ds, 0) + 1
+        by_bu_summary.setdefault(d["owning_bu"], {"count": 0, "value": 0})
+        by_bu_summary[d["owning_bu"]]["count"] += 1
+        by_bu_summary[d["owning_bu"]]["value"] += d.get("contract_value") or 0
+    ws2.append(["Total Kontrak", len(docs)])
+    ws2.append(["Total Nilai Portofolio", total_val])
+    ws2["B5"].number_format = '"Rp"#,##0'
+    ws2.append([])
+    ws2.append(["Distribusi Status", "Jumlah"])
+    for k, v in sorted(by_status_summary.items(), key=lambda x: -x[1]):
+        ws2.append([STATUS_LABEL_ID.get(k, k), v])
+    ws2.append([])
+    ws2.append(["Distribusi Business Unit", "Jumlah", "Nilai (Rp)"])
+    for k, v in sorted(by_bu_summary.items(), key=lambda x: -x[1]["value"]):
+        ws2.append([k, v["count"], v["value"]])
+    ws2.column_dimensions["A"].width = 36
+    ws2.column_dimensions["B"].width = 18
+    ws2.column_dimensions["C"].width = 22
+    for cell in ["A3", "A8", ]:
+        ws2[cell].font = Font(bold=True, color="0F766E")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fn = f"portofolio-pks-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fn}"'},
+    )
+
+@api.get("/reports/portfolio.pdf")
+async def export_pdf(
+    token: Optional[str] = Query(None),
+    institution_type: Optional[str] = None,
+    owning_bu: Optional[str] = None,
+    status: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
+    raw = None
+    if authorization and authorization.startswith("Bearer "):
+        raw = authorization[7:]
+    elif token:
+        raw = token
+    if not raw:
+        raise HTTPException(401, "Auth required")
+    try:
+        jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+
+    q = await _build_report_query(institution_type, owning_bu, status)
+    docs = await db.contracts.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=1.2 * cm, rightMargin=1.2 * cm, topMargin=1.2 * cm, bottomMargin=1.2 * cm,
+        title="Laporan Portofolio PKS BSI Maslahat",
+    )
+    styles = getSampleStyleSheet()
+    teal = rl_colors.HexColor("#0F766E")
+    amber = rl_colors.HexColor("#F59E0B")
+    slate = rl_colors.HexColor("#475569")
+    story = []
+
+    title_style = ParagraphStyle("title", parent=styles["Heading1"], textColor=teal, fontSize=18, leading=22, spaceAfter=4)
+    sub_style = ParagraphStyle("sub", parent=styles["Normal"], textColor=slate, fontSize=9, leading=12, spaceAfter=14)
+    h2_style = ParagraphStyle("h2", parent=styles["Heading2"], textColor=teal, fontSize=13, leading=16, spaceBefore=8, spaceAfter=6)
+
+    story.append(Paragraph("BSI MASLAHAT — Laporan Portofolio Kontrak", title_style))
+    story.append(Paragraph(
+        f"Dicetak: {datetime.now(timezone.utc).strftime('%d %B %Y %H:%M UTC')}   |   Total kontrak: <b>{len(docs)}</b>",
+        sub_style
+    ))
+
+    # Summary tiles
+    total_val = sum((d.get("contract_value") or 0) for d in docs)
+    active_count = sum(1 for d in docs if compute_derived_status(d) == "signed_active")
+    expiring_count = sum(1 for d in docs if compute_derived_status(d) == "expiring_soon")
+    expired_count = sum(1 for d in docs if compute_derived_status(d) == "expired")
+    summary_data = [[
+        Paragraph(f"<b>Total Nilai</b><br/><font size=13 color='#0F766E'>Rp {total_val:,.0f}</font>".replace(",", "."), styles["Normal"]),
+        Paragraph(f"<b>Active</b><br/><font size=13 color='#059669'>{active_count}</font>", styles["Normal"]),
+        Paragraph(f"<b>Expiring Soon</b><br/><font size=13 color='#F59E0B'>{expiring_count}</font>", styles["Normal"]),
+        Paragraph(f"<b>Expired</b><br/><font size=13 color='#E11D48'>{expired_count}</font>", styles["Normal"]),
+    ]]
+    summary_tbl = Table(summary_data, colWidths=[6.5 * cm] * 4)
+    summary_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), rl_colors.HexColor("#F8FAFC")),
+        ("BOX", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#CBD5E1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("PADDING", (0, 0), (-1, -1), 10),
+    ]))
+    story.append(summary_tbl)
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("Daftar Kontrak", h2_style))
+
+    header = ["No. PKS", "Mitra", "Jenis Institusi", "Judul PKS", "Owning BU", "Nilai (Rp)", "Berakhir", "Status"]
+    body_style = ParagraphStyle("body", parent=styles["Normal"], fontSize=8, leading=10)
+    rows = [header]
+    for d in docs:
+        ds = compute_derived_status(d)
+        val = d.get("contract_value") or 0
+        rows.append([
+            Paragraph(d["contract_id"], body_style),
+            Paragraph(d["partner_name"][:60], body_style),
+            Paragraph(d["institution_type"], body_style),
+            Paragraph(d["agreement_title"][:80], body_style),
+            Paragraph(d["owning_bu"], body_style),
+            Paragraph(f"Rp {val:,.0f}".replace(",", "."), body_style),
+            Paragraph(d.get("expiry_date", ""), body_style),
+            Paragraph(STATUS_LABEL_ID.get(ds, ds), body_style),
+        ])
+
+    col_widths = [2.4 * cm, 4.2 * cm, 2.4 * cm, 5.2 * cm, 3.0 * cm, 2.6 * cm, 2.0 * cm, 3.0 * cm]
+    tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), teal),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.4, rl_colors.HexColor("#CBD5E1")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F8FAFC")]),
+        ("PADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(tbl)
+
+    story.append(Spacer(1, 20))
+    story.append(Paragraph(
+        "<i>Dokumen ini dihasilkan secara otomatis oleh CRS Maslahat. Untuk konfirmasi lebih lanjut, hubungi Legal &amp; Compliance BSI Maslahat.</i>",
+        ParagraphStyle("footer", parent=styles["Normal"], fontSize=8, textColor=slate, alignment=1)
+    ))
+
+    doc.build(story)
+    buf.seek(0)
+    fn = f"portofolio-pks-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.pdf"
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fn}"'},
+    )
+
 # ---------- Mount ----------
 app.include_router(api)
 

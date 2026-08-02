@@ -8,6 +8,7 @@ import {
 } from "recharts";
 import { PieChart as PieIcon, BarChart3, TrendingUp, Trophy, Wallet } from "lucide-react";
 import { STATUS_META } from "@/components/StatusBadge";
+import ExportMenu from "@/components/ExportMenu";
 
 const COLORS = ["#0f766e", "#f59e0b", "#0891b2", "#e11d48", "#7c3aed", "#059669", "#ea580c"];
 const fmtIDR = (n) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0, notation: n > 1e9 ? "compact" : "standard" }).format(n || 0);
@@ -25,9 +26,14 @@ export default function Analytics() {
       {/* Hero */}
       <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-teal-900 text-white p-6 md:p-8 relative overflow-hidden">
         <div className="absolute -right-16 -top-16 h-48 w-48 rounded-full bg-teal-500/20 blur-3xl"></div>
-        <p className="text-xs font-semibold uppercase tracking-widest text-amber-300">Analitik Portofolio</p>
-        <h1 className="font-heading text-3xl md:text-4xl font-bold mt-2 leading-tight relative">Kinerja Kerja Sama Maslahat</h1>
-        <p className="text-sm text-teal-100 mt-2 relative max-w-lg">Visualisasi nilai kontrak per Business Unit, sebaran status, dan mitra strategis.</p>
+        <div className="relative flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-amber-300">Analitik Portofolio</p>
+            <h1 className="font-heading text-3xl md:text-4xl font-bold mt-2 leading-tight">Kinerja Kerja Sama Maslahat</h1>
+            <p className="text-sm text-teal-100 mt-2 max-w-lg">Visualisasi nilai kontrak per Business Unit, sebaran status, dan mitra strategis.</p>
+          </div>
+          <ExportMenu variant="amber" />
+        </div>
       </div>
 
       {/* Summary tiles */}

@@ -3,6 +3,7 @@ import { api, formatApiError } from "@/lib/api";
 import KpiCard from "@/components/KpiCard";
 import StatusBadge from "@/components/StatusBadge";
 import ContractDetailSheet from "@/components/ContractDetailSheet";
+import ExportMenu from "@/components/ExportMenu";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -62,6 +63,7 @@ export default function Dashboard() {
             <p className="text-sm text-teal-100 mt-2 max-w-lg">Monitor seluruh Perjanjian Kerja Sama BSI Maslahat secara real-time. Aksi cepat, keputusan tepat.</p>
           </div>
           <div className="flex gap-2">
+            <ExportMenu filters={{ institution_type: itype, owning_bu: obu, status }} variant="outline" />
             <Button data-testid="dashboard-new-contract" onClick={()=>nav("/submit")} className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold">
               + PKS Baru
             </Button>
