@@ -43,6 +43,11 @@ export default function Dashboard() {
   };
   useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, []);
   useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [itype, obu, status]);
+  useEffect(() => {
+    const t = setTimeout(() => { loadAll(); }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   return (
     <div className="space-y-8">
