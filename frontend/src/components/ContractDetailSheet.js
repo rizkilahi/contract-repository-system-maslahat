@@ -20,12 +20,17 @@ const fmtDT = (s) => s ? new Date(s).toLocaleString("id-ID", { day: "2-digit", m
 const fmtIDR = (n) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n || 0);
 
 const NEXT_STATUS = {
-  drafting: [{ v: "under_legal_review", label: "Kirim untuk Legal Review", role: ["business_unit"], icon: ArrowRight }],
+  drafting: [{ v: "submitted_for_review", label: "Kirim untuk Legal Review", role: ["business_unit"], icon: ArrowRight }],
+  submitted_for_review: [
+    { v: "drafting", label: "Tarik Kembali ke Draft", role: ["business_unit"], icon: XCircle, variant: "warn" },
+    { v: "revision_required", label: "Tolak di Intake", role: ["legal_officer"], icon: XCircle, variant: "warn" },
+    { v: "under_legal_review", label: "Ambil untuk Review", role: ["legal_officer"], icon: ArrowRight },
+  ],
   under_legal_review: [
     { v: "revision_required", label: "Minta Revisi", role: ["legal_officer"], icon: XCircle, variant: "warn" },
     { v: "ready_for_signature", label: "Setujui — Siap Ditandatangani", role: ["legal_officer"], icon: CheckCircle2 },
   ],
-  revision_required: [{ v: "under_legal_review", label: "Ajukan Ulang untuk Review", role: ["business_unit"], icon: ArrowRight }],
+  revision_required: [{ v: "submitted_for_review", label: "Ajukan Ulang untuk Review", role: ["business_unit"], icon: ArrowRight }],
   ready_for_signature: [{ v: "pending_final_verification", label: "Upload Dokumen Tandatangan", role: ["business_unit"], icon: Upload }],
   pending_final_verification: [
     { v: "revision_required", label: "Tolak Scan (Perlu Scan Ulang)", role: ["legal_officer"], icon: XCircle, variant: "warn" },

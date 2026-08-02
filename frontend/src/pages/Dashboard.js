@@ -15,6 +15,19 @@ import { useNavigate } from "react-router-dom";
 
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : "-";
 
+// Status filter options (as per user spec) — labels are dropdown display; value = underlying status
+const STATUS_FILTER_OPTIONS = [
+  { label: "All", value: "all" },
+  { label: "Drafting", value: "drafting" },
+  { label: "Submitted for Review", value: "submitted_for_review" },
+  { label: "Under Legal Review", value: "under_legal_review" },
+  { label: "Revision Required", value: "revision_required" },
+  { label: "Legal Approved", value: "ready_for_signature" },
+  { label: "Signed & Active", value: "signed_active" },
+  { label: "Expiring Soon", value: "expiring_soon" },
+  { label: "Expired", value: "expired" },
+];
+
 export default function Dashboard() {
   const [stats, setStats] = useState({ total_active: 0, pending_verification: 0, expiring_soon: 0, expired: 0 });
   const [rows, setRows] = useState([]);
@@ -29,10 +42,9 @@ export default function Dashboard() {
 
   const loadAll = async () => {
     try {
-      const params = { q: q || undefined, institution_type: itype, owning_bu: obu, status };
       const [s, c, m] = await Promise.all([
         api.get("/dashboard/stats"),
-        api.get("/contracts", { params }),
+        api.get("/contracts"),               // load ALL once — filtering happens client-side
         api.get("/meta/options"),
       ]);
       setStats(s.data);
@@ -43,12 +55,22 @@ export default function Dashboard() {
     }
   };
   useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, []);
-  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [itype, obu, status]);
-  useEffect(() => {
-    const t = setTimeout(() => { loadAll(); }, 400);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+
+  // Client-side filtering — instant, no reload
+  const filteredRows = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return rows.filter(r => {
+      const cur = r.derived_status || r.status;
+      if (status !== "all" && cur !== status) return false;
+      if (itype !== "all" && r.institution_type !== itype) return false;
+      if (obu !== "all" && r.owning_bu !== obu) return false;
+      if (term) {
+        const hay = [r.contract_id, r.partner_name, r.agreement_title].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      return true;
+    });
+  }, [rows, q, status, itype, obu]);
 
   return (
     <div className="space-y-8">
@@ -85,25 +107,39 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-heading text-lg font-bold">Repositori Kontrak</h2>
-              <p className="text-xs text-slate-500 mt-1">Menampilkan {rows.length} kontrak</p>
+              <p className="text-xs text-slate-500 mt-1">Menampilkan {filteredRows.length} dari {rows.length} kontrak</p>
             </div>
           </div>
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div className="relative md:col-span-2">
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-12 gap-3">
+            <div className="relative md:col-span-5">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <Input data-testid="search-input" value={q} onChange={(e)=>setQ(e.target.value)}
-                onKeyDown={(e)=>{ if (e.key === "Enter") loadAll(); }}
                 placeholder="Cari No. PKS, mitra, atau judul PKS..." className="pl-10 h-10" />
             </div>
+            <div className="md:col-span-3">
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger data-testid="filter-status" className="h-10">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-3.5 w-3.5 text-teal-700" />
+                    <SelectValue placeholder="Filter by Status" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_FILTER_OPTIONS.map(o => (
+                    <SelectItem key={o.label} value={o.value} data-testid={`status-opt-${o.value}`}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Select value={itype} onValueChange={setItype}>
-              <SelectTrigger data-testid="filter-institution" className="h-10"><SelectValue placeholder="Jenis Institusi" /></SelectTrigger>
+              <SelectTrigger data-testid="filter-institution" className="h-10 md:col-span-2"><SelectValue placeholder="Jenis Institusi" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Semua Jenis Institusi</SelectItem>
                 {meta.institution_types.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
               </SelectContent>
             </Select>
             <Select value={obu} onValueChange={setObu}>
-              <SelectTrigger data-testid="filter-obu" className="h-10"><SelectValue placeholder="Owning BU" /></SelectTrigger>
+              <SelectTrigger data-testid="filter-obu" className="h-10 md:col-span-2"><SelectValue placeholder="Owning BU" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Semua Business Unit</SelectItem>
                 {meta.owning_bus.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
@@ -116,32 +152,40 @@ export default function Dashboard() {
           <Table>
             <TableHeader className="bg-slate-50">
               <TableRow>
-                <TableHead className="text-xs font-semibold text-slate-600">No. PKS</TableHead>
-                <TableHead className="text-xs font-semibold text-slate-600">Mitra</TableHead>
-                <TableHead className="text-xs font-semibold text-slate-600">Jenis Institusi</TableHead>
-                <TableHead className="text-xs font-semibold text-slate-600 min-w-[220px]">Judul PKS</TableHead>
-                <TableHead className="text-xs font-semibold text-slate-600">Tanggal Berakhir</TableHead>
-                <TableHead className="text-xs font-semibold text-slate-600">Status</TableHead>
-                <TableHead className="text-xs font-semibold text-slate-600 text-right">Aksi</TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600">Contract ID</TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600">Partner Name</TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600 min-w-[220px]">Agreement Title</TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600">Effective Date</TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600">Expiry Date</TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600">Contract Status</TableHead>
+                <TableHead className="text-xs font-semibold text-slate-600 text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.length === 0 && (
-                <TableRow><TableCell colSpan={7} className="text-center py-16 text-sm text-slate-400">Belum ada kontrak</TableCell></TableRow>
+              {filteredRows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-16" data-testid="empty-state">
+                    <div className="flex flex-col items-center gap-2 text-slate-400">
+                      <Filter className="h-8 w-8 opacity-40" />
+                      <p className="text-sm font-medium text-slate-600">No contracts found for this status</p>
+                      <p className="text-xs text-slate-400">Coba ubah filter atau kata kunci pencarian</p>
+                    </div>
+                  </TableCell>
+                </TableRow>
               )}
-              {rows.map((r) => (
+              {filteredRows.map((r) => (
                 <TableRow key={r.id} className="text-sm hover:bg-slate-50/60" data-testid={`contract-row-${r.contract_id}`}>
                   <TableCell className="font-mono text-xs font-semibold text-teal-700">{r.contract_id}</TableCell>
                   <TableCell className="font-medium max-w-[180px] truncate" title={r.partner_name}>{r.partner_name}</TableCell>
-                  <TableCell className="text-xs text-slate-600">{r.institution_type}</TableCell>
                   <TableCell className="max-w-[280px] truncate" title={r.agreement_title}>{r.agreement_title}</TableCell>
+                  <TableCell className="text-xs">{fmtDate(r.effective_date)}</TableCell>
                   <TableCell className="text-xs">{fmtDate(r.expiry_date)}</TableCell>
                   <TableCell><StatusBadge status={r.derived_status || r.status} /></TableCell>
                   <TableCell className="text-right">
                     <Button size="sm" variant="ghost" data-testid={`view-${r.contract_id}`}
                       onClick={()=>{ setSelected(r.id); setSheetOpen(true); }}
                       className="h-8 text-teal-700 hover:bg-teal-50 hover:text-teal-800">
-                      <Eye className="h-4 w-4 mr-1.5" /> Detail
+                      <Eye className="h-4 w-4 mr-1.5" /> View Detail
                     </Button>
                   </TableCell>
                 </TableRow>

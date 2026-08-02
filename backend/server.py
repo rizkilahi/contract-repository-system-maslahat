@@ -44,6 +44,7 @@ OWNING_BUS = ["ZISWAF", "Community Development", "Corporate Partnership", "Progr
 
 STATUS_FLOW = [
     "drafting",
+    "submitted_for_review",
     "under_legal_review",
     "revision_required",
     "ready_for_signature",
@@ -71,15 +72,18 @@ LEGAL_UPLOAD_EXTS = {"docx", "pdf"}   # Legal: annotated files
 # State transitions per role (BRD rule 2 — exclusive rights)
 ALLOWED_TRANSITIONS = {
     "business_unit": {
-        ("drafting", "under_legal_review"),
-        ("revision_required", "under_legal_review"),
+        ("drafting", "submitted_for_review"),
+        ("revision_required", "submitted_for_review"),
+        ("submitted_for_review", "drafting"),                # BU can recall while awaiting pickup
         ("ready_for_signature", "pending_final_verification"),
     },
     "legal_officer": {
-        ("under_legal_review", "ready_for_signature"),        # Approve
-        ("under_legal_review", "revision_required"),          # Request Revision
-        ("pending_final_verification", "revision_required"),  # Request Revision (scan)
-        ("pending_final_verification", "signed_active"),      # Verify & Activate
+        ("submitted_for_review", "under_legal_review"),      # Pick up for review
+        ("submitted_for_review", "revision_required"),       # Reject at intake
+        ("under_legal_review", "ready_for_signature"),       # Approve
+        ("under_legal_review", "revision_required"),         # Request Revision
+        ("pending_final_verification", "revision_required"), # Request Revision (scan)
+        ("pending_final_verification", "signed_active"),     # Verify & Activate
     },
 }
 
@@ -306,6 +310,29 @@ async def seed_users():
 
 async def seed_sample_contracts():
     if await db.contracts.count_documents({}) > 0:
+        # Ensure at least one submitted_for_review sample exists for the new filter option.
+        if not await db.contracts.find_one({"status": "submitted_for_review"}):
+            bu = await db.users.find_one({"role": "business_unit"})
+            if bu:
+                eff = datetime.now(timezone.utc).date()
+                exp = eff + timedelta(days=365)
+                cid = gen_contract_id()
+                await db.contracts.insert_one({
+                    "id": str(uuid.uuid4()), "contract_id": cid,
+                    "partner_name": "PT Sinar Amanah Nusantara",
+                    "partner_pic_name": "Ir. Rahmat Hidayat",
+                    "partner_pic_phone": "+628123456789",
+                    "partner_pic_email": "rahmat@sinaramanah.co.id",
+                    "institution_type": "Perusahaan (PT)",
+                    "agreement_title": "Program Beasiswa Mahasiswa Dhuafa 2026",
+                    "contract_value": 150_000_000,
+                    "effective_date": eff.isoformat(), "expiry_date": exp.isoformat(),
+                    "owning_bu": "Pendidikan", "bu_pic_name": bu["name"], "bu_pic_id": bu["id"],
+                    "business_unit_id": "Pendidikan",
+                    "reference_number": "04/PKS-2026/BSI MASLAHAT",
+                    "remarks": "Menunggu Legal untuk mulai review", "status": "submitted_for_review",
+                    "versions": [], "created_at": now_iso(), "updated_at": now_iso(),
+                })
         return
     bu = await db.users.find_one({"role": "business_unit"})
     if not bu:
@@ -480,7 +507,8 @@ async def list_contracts(
         query["institution_type"] = institution_type
     if owning_bu and owning_bu != "all":
         query["owning_bu"] = owning_bu
-    if status and status != "all":
+    # Only apply DB-level status filter for real stored statuses.
+    if status and status not in ("all", "expiring_soon", "expired"):
         query["status"] = status
     if q:
         query["$or"] = [
@@ -491,6 +519,9 @@ async def list_contracts(
     docs = await db.contracts.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     for d in docs:
         d["derived_status"] = compute_derived_status(d)
+    # Derived-state filters computed post-query
+    if status in ("expiring_soon", "expired"):
+        docs = [d for d in docs if d["derived_status"] == status]
     return docs
 
 @api.get("/dashboard/stats")
