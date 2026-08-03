@@ -44,7 +44,11 @@ WEBHOOK_CRON_SECRET = os.environ.get('WEBHOOK_CRON_SECRET', '')
 # ---------- Roles ----------
 Role = Literal["admin", "business_unit", "legal_officer", "management"]
 INSTITUTION_TYPES = ["Yayasan", "Perusahaan (PT)", "Koperasi", "Instansi Pemerintah", "Perorangan"]
-OWNING_BUS = ["ZISWAF", "Community Development", "Corporate Partnership", "Program Sosial", "Pendidikan"]
+OWNING_BUS = [
+    "CRG", "CAG", "FSG", "HCG", "PDG", "RNG", "DFG", "BCG",
+    "MCG", "IDG", "IAG", "CSG", "LCG", "EDG", "WAG", "SMG",
+    "LEG", "PGG"
+]
 
 STATUS_FLOW = [
     "drafting",
@@ -320,7 +324,7 @@ def strip_id(doc):
 
 # ---------- Seed ----------
 DEMO_USERS = [
-    {"email": "bu@bsimaslahat.co.id", "name": "Ahmad Faizal (Business Unit)", "role": "business_unit", "password": "Demo@2026", "business_unit_id": "ZISWAF"},
+    {"email": "bu@bsimaslahat.co.id", "name": "Ahmad Faizal (Business Unit)", "role": "business_unit", "password": "Demo@2026", "business_unit_id": "CRG"},
     {"email": "legal@bsimaslahat.co.id", "name": "Siti Rahmawati (Legal Officer)", "role": "legal_officer", "password": "Demo@2026", "business_unit_id": None},
     {"email": "management@bsimaslahat.co.id", "name": "Budi Santoso (Manajemen)", "role": "management", "password": "Demo@2026", "business_unit_id": None},
 ]
@@ -383,8 +387,8 @@ async def seed_sample_contracts():
                     "agreement_title": "Program Beasiswa Mahasiswa Dhuafa 2026",
                     "contract_value": 150_000_000,
                     "effective_date": eff.isoformat(), "expiry_date": exp.isoformat(),
-                    "owning_bu": "Pendidikan", "bu_pic_name": bu["name"], "bu_pic_id": bu["id"],
-                    "business_unit_id": "Pendidikan",
+                    "owning_bu": "LEG", "bu_pic_name": bu["name"], "bu_pic_id": bu["id"],
+                    "business_unit_id": "LEG",
                     "reference_number": "04/001/PKS/BSI MASLAHAT/2026",
                     "remarks": "Menunggu Legal untuk mulai review", "status": "submitted_for_review",
                     "versions": [], "created_at": now_iso(), "updated_at": now_iso(),
@@ -394,16 +398,16 @@ async def seed_sample_contracts():
     if not bu:
         return
     samples = [
-        ("Yayasan Rumah Zakat", "Yayasan", "PKS Program ZISWAF - Distribusi Bantuan Sosial", "signed_active", "ZISWAF", 250_000_000, 45),
-        ("PT Berkah Sejahtera", "Perusahaan (PT)", "Kerjasama Corporate CSR Pendidikan", "signed_active", "Pendidikan", 500_000_000, 200),
-        ("Koperasi Mitra Ummat", "Koperasi", "Pembiayaan Mikro Anggota Koperasi", "pending_final_verification", "Community Development", 750_000_000, 300),
-        ("Yayasan Pendidikan Al-Amanah", "Yayasan", "Beasiswa Santri Berprestasi 2026", "under_legal_review", "Pendidikan", 180_000_000, 365),
-        ("PT Halal Logistik Indonesia", "Perusahaan (PT)", "Distribusi Logistik Bantuan Kemanusiaan", "signed_active", "Program Sosial", 320_000_000, 25),
-        ("Dinas Sosial Provinsi Jabar", "Instansi Pemerintah", "Sinergi Program Pengentasan Kemiskinan", "drafting", "Program Sosial", 0, 400),
-        ("Yayasan Panti Asuhan Nurul Iman", "Yayasan", "Program Ramadhan Berbagi 2026", "signed_active", "ZISWAF", 95_000_000, -10),
-        ("PT Fintech Syariah Nusantara", "Perusahaan (PT)", "Integrasi Pembayaran Zakat Digital", "revision_required", "Corporate Partnership", 420_000_000, 500),
-        ("Ustadz Ahmad Hidayat", "Perorangan", "Program Dai Ambassador BSI Maslahat", "ready_for_signature", "Pendidikan", 60_000_000, 730),
-        ("Yayasan Rumah Yatim Indonesia", "Yayasan", "Program Ekonomi Keluarga Yatim", "signed_active", "Community Development", 275_000_000, 90),
+        ("Yayasan Rumah Zakat", "Yayasan", "PKS Program ZISWAF - Distribusi Bantuan Sosial", "signed_active", "WAG", 250_000_000, 45),
+        ("PT Berkah Sejahtera", "Perusahaan (PT)", "Kerjasama Corporate CSR Pendidikan", "signed_active", "LEG", 500_000_000, 200),
+        ("Koperasi Mitra Ummat", "Koperasi", "Pembiayaan Mikro Anggota Koperasi", "pending_final_verification", "EDG", 750_000_000, 300),
+        ("Yayasan Pendidikan Al-Amanah", "Yayasan", "Beasiswa Santri Berprestasi 2026", "under_legal_review", "LEG", 180_000_000, 365),
+        ("PT Halal Logistik Indonesia", "Perusahaan (PT)", "Distribusi Logistik Bantuan Kemanusiaan", "signed_active", "CAG", 320_000_000, 25),
+        ("Dinas Sosial Provinsi Jabar", "Instansi Pemerintah", "Sinergi Program Pengentasan Kemiskinan", "drafting", "CAG", 0, 400),
+        ("Yayasan Panti Asuhan Nurul Iman", "Yayasan", "Program Ramadhan Berbagi 2026", "signed_active", "WAG", 95_000_000, -10),
+        ("PT Fintech Syariah Nusantara", "Perusahaan (PT)", "Integrasi Pembayaran Zakat Digital", "revision_required", "FSG", 420_000_000, 500),
+        ("Ustadz Ahmad Hidayat", "Perorangan", "Program Dai Ambassador BSI Maslahat", "ready_for_signature", "LEG", 60_000_000, 730),
+        ("Yayasan Rumah Yatim Indonesia", "Yayasan", "Program Ekonomi Keluarga Yatim", "signed_active", "EDG", 275_000_000, 90),
     ]
     for i, (partner, itype, title, status, obu, val, days_to_exp) in enumerate(samples):
         eff = datetime.now(timezone.utc).date()

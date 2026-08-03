@@ -161,6 +161,7 @@ yarn install                    # ⚠️ jangan npm install
 **Backend** — `http://localhost:8001`
 ```bash
 cd backend
+.\.venv\Scripts\Activate.ps1
 uvicorn server:app --reload --port 8001
 ```
 

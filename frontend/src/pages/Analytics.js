@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { getFullBUName } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -140,7 +141,7 @@ export default function Analytics() {
                 <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-50 text-amber-700 text-xs font-bold">{i+1}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-slate-900 truncate">{p.partner_name}</p>
-                  <p className="text-[10px] text-slate-500 font-mono">{p.contract_id} · {p.owning_bu}</p>
+                  <p className="text-[10px] text-slate-500 font-mono">{p.contract_id} · {getFullBUName(p.owning_bu)}</p>
                 </div>
                 <span className="text-xs font-bold text-teal-700">{fmtIDR(p.value)}</span>
               </div>

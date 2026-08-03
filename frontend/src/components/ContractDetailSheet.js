@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, formatApiError } from "@/lib/api";
+import { api, API_BASE, formatApiError } from "@/lib/api";
+import { getFullBUName } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -12,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import StatusBadge, { STATUS_META } from "@/components/StatusBadge";
 import { toast } from "sonner";
 import { Download, Upload, Building2, Phone, Mail, User, DollarSign, Calendar, Briefcase, FileText, ClockAlert, ArrowRight, CheckCircle2, XCircle, SplitSquareHorizontal } from "lucide-react";
-import { API_BASE } from "@/lib/api";
+
 import { useNavigate } from "react-router-dom";
 
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : "-";
@@ -135,7 +136,7 @@ export default function ContractDetailSheet({ open, onOpenChange, contractId, on
                     <Meta icon={DollarSign} label="Nilai Kerjasama" value={fmtIDR(contract.contract_value)} />
                     <Meta icon={Calendar} label="Tanggal Efektif" value={fmtDate(contract.effective_date)} />
                     <Meta icon={ClockAlert} label="Tanggal Berakhir" value={fmtDate(contract.expiry_date)} />
-                    <Meta icon={Briefcase} label="Owning BU" value={contract.owning_bu} />
+                    <Meta icon={Briefcase} label="Owning BU" value={getFullBUName(contract.owning_bu)} />
                     <Meta icon={User} label="PIC Business Unit" value={contract.bu_pic_name} />
                   </div>
 

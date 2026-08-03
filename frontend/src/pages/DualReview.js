@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { getFullBUName } from "@/lib/utils";
 import { api, API_BASE, formatApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Card } from "@/components/ui/card";
@@ -87,7 +88,7 @@ export default function DualReview() {
               <StatusBadge status={contract.derived_status || contract.status} />
             </div>
             <h1 className="font-heading text-2xl md:text-3xl font-bold mt-2 leading-tight">{contract.agreement_title}</h1>
-            <p className="text-sm text-teal-100 mt-1">{contract.partner_name} · {contract.institution_type} · {contract.owning_bu}</p>
+            <p className="text-sm text-teal-100 mt-1">{contract.partner_name} · {contract.institution_type} · {getFullBUName(contract.owning_bu)}</p>
           </div>
         </div>
       </div>
