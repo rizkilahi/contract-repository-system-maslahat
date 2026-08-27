@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / '.env', override=True)
 
 import os
 import io
@@ -21,7 +21,7 @@ import jwt
 from docx import Document
 import os
 from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env")) # Load variables from .env into os.environ
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True) # Load variables from .env into os.environ
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Response, Query, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -97,6 +97,8 @@ ALLOWED_TRANSITIONS = {
 
 # ---------- App ----------
 app = FastAPI(title="CRS Maslahat API")
+
+
 api = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
 
@@ -563,6 +565,8 @@ async def list_contracts(
     user: dict = Depends(get_current_user),
 ):
     query = {}
+    if user.get("role") == "business_unit":
+        query["owning_bu"] = user.get("business_unit_id")
     if institution_type and institution_type != "all":
         query["institution_type"] = institution_type
     if owning_bu and owning_bu != "all":
@@ -586,7 +590,10 @@ async def list_contracts(
 
 @api.get("/dashboard/stats")
 async def dashboard_stats(user: dict = Depends(get_current_user)):
-    docs = await db.contracts.find({}, {"_id": 0}).to_list(1000)
+    query = {}
+    if user.get("role") == "business_unit":
+        query["owning_bu"] = user.get("business_unit_id")
+    docs = await db.contracts.find(query, {"_id": 0}).to_list(1000)
     total_active = 0
     pending = 0
     expiring = 0
@@ -692,11 +699,16 @@ async def get_contract(cid: str, user: dict = Depends(get_current_user)):
     doc = await db.contracts.find_one({"id": cid}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Kontrak tidak ditemukan")
+    if user.get("role") == "business_unit" and doc.get("owning_bu") != user.get("business_unit_id"):
+        raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
     doc["derived_status"] = compute_derived_status(doc)
     return doc
 
 @api.get("/contracts/{cid}/audit")
 async def get_audit(cid: str, user: dict = Depends(get_current_user)):
+    doc = await db.contracts.find_one({"id": cid}, {"_id": 1, "owning_bu": 1})
+    if doc and user.get("role") == "business_unit" and doc.get("owning_bu") != user.get("business_unit_id"):
+        raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
     logs = await db.audit_logs.find({"contract_id": cid}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return logs
 
@@ -709,6 +721,8 @@ async def update_status(cid: str, body: StatusUpdate, user: dict = Depends(get_c
     if new_status not in STATUS_FLOW:
         raise HTTPException(400, "Status tidak valid")
     role = user["role"]
+    if role == "business_unit" and doc.get("owning_bu") != user.get("business_unit_id"):
+        raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
     if role not in ALLOWED_TRANSITIONS:
         raise HTTPException(403, f"Role '{role}' tidak diperbolehkan mengubah status kontrak")
     transition = (doc.get("status"), new_status)
@@ -736,6 +750,8 @@ async def upload_version(
     doc = await db.contracts.find_one({"id": cid})
     if not doc:
         raise HTTPException(404, "Kontrak tidak ditemukan")
+    if user.get("role") == "business_unit" and doc.get("owning_bu") != user.get("business_unit_id"):
+        raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
     ext = (file.filename.split(".")[-1] if "." in (file.filename or "") else "bin").lower()
     # Role-based file-type restrictions per BRD rule 2.
     allowed_exts = BU_UPLOAD_EXTS if user["role"] == "business_unit" else LEGAL_UPLOAD_EXTS
@@ -888,7 +904,10 @@ async def file_text(file_id: str, user: dict = Depends(get_current_user)):
 # ---------- Analytics ----------
 @api.get("/dashboard/analytics")
 async def analytics(user: dict = Depends(get_current_user)):
-    docs = await db.contracts.find({}, {"_id": 0}).to_list(1000)
+    query = {}
+    if user.get("role") == "business_unit":
+        query["owning_bu"] = user.get("business_unit_id")
+    docs = await db.contracts.find(query, {"_id": 0}).to_list(1000)
     by_bu = {}
     by_status = {}
     by_inst = {}
@@ -953,10 +972,16 @@ class CommentIn(BaseModel):
 
 @api.get("/contracts/{cid}/comments")
 async def list_comments(cid: str, user: dict = Depends(get_current_user)):
+    doc = await db.contracts.find_one({"id": cid}, {"_id": 1, "owning_bu": 1})
+    if doc and user.get("role") == "business_unit" and doc.get("owning_bu") != user.get("business_unit_id"):
+        raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
     return await db.comments.find({"contract_id": cid}, {"_id": 0}).sort("created_at", 1).to_list(500)
 
 @api.post("/contracts/{cid}/comments")
 async def add_comment(cid: str, body: CommentIn, user: dict = Depends(get_current_user)):
+    contract = await db.contracts.find_one({"id": cid}, {"_id": 1, "owning_bu": 1})
+    if contract and user.get("role") == "business_unit" and contract.get("owning_bu") != user.get("business_unit_id"):
+        raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
     doc = {
         "id": str(uuid.uuid4()), "contract_id": cid,
         "user_id": user["id"], "user_name": user["name"], "user_role": user["role"],
@@ -1057,12 +1082,14 @@ STATUS_LABEL_ID = {
     "expired": "Expired",
 }
 
-async def _build_report_query(institution_type: Optional[str], owning_bu: Optional[str], status: Optional[str]):
+async def _build_report_query(institution_type: Optional[str], owning_bu: Optional[str], status: Optional[str], user: dict = None):
     q = {}
+    if user and user.get("role") == "business_unit":
+        q["owning_bu"] = user.get("business_unit_id")
+    elif owning_bu and owning_bu != "all":
+        q["owning_bu"] = owning_bu
     if institution_type and institution_type != "all":
         q["institution_type"] = institution_type
-    if owning_bu and owning_bu != "all":
-        q["owning_bu"] = owning_bu
     if status and status != "all":
         q["status"] = status
     return q
@@ -1083,11 +1110,14 @@ async def export_xlsx(
     if not raw:
         raise HTTPException(401, "Auth required")
     try:
-        jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+        if not user:
+            raise HTTPException(401, "User not found")
     except Exception:
         raise HTTPException(401, "Invalid token")
 
-    q = await _build_report_query(institution_type, owning_bu, status)
+    q = await _build_report_query(institution_type, owning_bu, status, user)
     docs = await db.contracts.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
 
     wb = Workbook()
@@ -1211,11 +1241,14 @@ async def export_pdf(
     if not raw:
         raise HTTPException(401, "Auth required")
     try:
-        jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+        if not user:
+            raise HTTPException(401, "User not found")
     except Exception:
         raise HTTPException(401, "Invalid token")
 
-    q = await _build_report_query(institution_type, owning_bu, status)
+    q = await _build_report_query(institution_type, owning_bu, status, user)
     docs = await db.contracts.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
 
     buf = io.BytesIO()
