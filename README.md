@@ -2,13 +2,13 @@
 
 # 🕌 CRS Maslahat — Contract Repository System
 
-**Sistem repositori kontrak terpusat untuk BSI Maslahat**
-_Kelola siklus hidup Perjanjian Kerja Sama (PKS) dari drafting → legal review → tanda tangan → verifikasi → monitoring, dengan RBAC ketat, audit trail append-only, dan auto-fill .docx berbasis regex._
+**Sistem Repositori & Siklus Hidup Perjanjian Kerja Sama (PKS) Terpusat BSI Maslahat**  
+_Kelola siklus hidup PKS dari drafting → telaah legal (dual review) → tanda tangan → verifikasi → pemantauan kedaluwarsa, dilengkapi RBAC ketat 4-role, audit trail append-only, dan ekstraksi auto-fill .docx._
 
 [![Stack](https://img.shields.io/badge/Stack-FastAPI%20%2B%20React%20%2B%20MongoDB-0f766e?style=for-the-badge)](#-tech-stack)
-[![Brand](https://img.shields.io/badge/Theme-Maslahat%20Connect-008A85?style=for-the-badge)](#-brand-identity)
+[![Theme](https://img.shields.io/badge/Theme-Maslahat%20Connect%20(%23008A85)-008A85?style=for-the-badge)](#-brand-identity)
 [![License](https://img.shields.io/badge/License-Internal%20BSI%20Maslahat-F3A912?style=for-the-badge)](#)
-[![Status](https://img.shields.io/badge/Status-MVP%20Ready-10b981?style=for-the-badge)](#)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-10b981?style=for-the-badge)](#)
 
 </div>
 
@@ -16,295 +16,242 @@ _Kelola siklus hidup Perjanjian Kerja Sama (PKS) dari drafting → legal review 
 
 ## 📖 Latar Belakang
 
-Sebelumnya siklus PKS BSI Maslahat masih dikelola manual via email, folder shared drive, dan spreadsheet — menimbulkan risiko dokumen tercecer, tidak ada trail audit, dan telat mengingat kontrak yang akan kedaluwarsa. **CRS Maslahat** membawa seluruh alur ke satu platform aman berbasis peran: Business Unit mengajukan, Legal Officer menelaah, Manajemen memantau, Admin mengaudit.
+Sebelumnya, siklus PKS BSI Maslahat dikelola secara manual melalui email, folder shared drive, dan spreadsheet — menimbulkan risiko dokumen tercecer, tidak adanya audit trail terpusat, dan keterlambatan monitoring kontrak kedaluwarsa. 
+
+**CRS Maslahat** mengintegrasikan seluruh alur kerja ke dalam satu platform aman:
+- 🏢 **Business Unit (BU)**: Mengajukan draft PKS, upload dokumen, revisi draft.
+- ⚖️ **Legal Officer**: Menelaah draft, memberi catatan/revisi (Dual Review), watermark dokumen, dan approval/verifikasi.
+- 📊 **Manajemen**: Memantau portofolio kontrak, analitik KPI, dan ekspor laporan secara *Read-Only*.
+- 🛡️ **Administrator**: Mengelola user, memantau audit log global dan kebijakan keamanan sistem.
+
+---
 
 ## ✨ Fitur Utama
 
-| Modul | Yang Bisa Dilakukan |
-|-------|---------------------|
-| 🏠 **Dasbor Utama** | 4 KPI (Active / Pending / Expiring Soon / Expired), tabel repositori dengan **filter status 9-opsi** & **sort per kolom** (Contract ID / Effective / Expiry), pencarian instan |
-| 📄 **Pengajuan PKS** | Form 3-langkah (Upload → Info Mitra → Detail Kerja Sama), **auto-fill dari `.docx` via mammoth.js** dengan 6 anchor regex, badge ✨ AUTO pada field terisi |
-| ⚖️ **Panduan Legal** | Matriks read-only kelengkapan dokumen mitra per Jenis Institusi (Yayasan / PT / Koperasi / Instansi / Perorangan) |
-| 🔍 **Detail Kontrak** | Metadata grid + Version History + Audit Trail timeline dalam Side Sheet, dengan tombol aksi role-guarded |
-| 🖥️ **Dual Review Mode** | Split view Draft (.docx) vs Scan (PDF) dengan comment thread berdampingan untuk Legal Officer |
-| 📈 **Analitik Portofolio** | Bar / Pie / Line chart nilai per BU, sebaran status, tren bulanan, Top 5 mitra (Recharts) |
-| 📥 **Ekspor Laporan** | Unduh **Excel 2-sheet** (data + ringkasan) & **PDF landscape** siap cetak, hormati filter aktif |
-| 🔔 **Reminder H-60/H-30/H-7** | Cron harian `.emergent/crons.yml` → notifikasi bell in-app + entry `system_audit` |
-| 🔐 **Security Hardened** | JWT 15-menit sliding session, RBAC 4-role tanpa admin bypass, Column-Level State Lock, audit trail append-only, No-DELETE policy |
+| Modul | Deskripsi & Kemampuan |
+|---|---|
+| 🏠 **Dasbor Repositori** | 4 KPI cards (Total Aktif, Menunggu Telaah, Segera Berakhir, Kedaluwarsa), tabel repositori dengan filter 9-status, sorting multi-kolom, dan pencarian cepat. |
+| 📄 **Pengajuan PKS Pintar** | Form 3-tahap (Upload Draft → Info Mitra → Detail Kerja Sama) dengan **Auto-fill Regex dari `.docx`** (Mammoth.js / python-docx) dan label ✨ AUTO. |
+| ⚖️ **Panduan Legal Interaktif** | Matriks syarat dokumen mitra sesuai 7 Jenis Institusi (*Yayasan, PT, Koperasi, Instansi Pemerintah, DKM, Perkumpulan, Perorangan*). |
+| 🔍 **Side Sheet Detail Kontrak** | Informasi metadata, riwayat versi dokumen, dan audit trail timeline per kontrak dalam satu panel geser. |
+| 🖥️ **Dual Review Mode** | Tampilan split-screen teks draft (.docx) berdampingan dengan dokumen scan (.pdf) serta thread komentar interaktif untuk Legal Officer. |
+| 📈 **Analitik Portofolio** | Visualisasi data (Recharts): Nilai kontrak per Business Unit, distribusi status, tren bulanan, dan Top 5 Mitra. |
+| 📥 **Ekspor Laporan** | Unduh laporan **Excel 2-sheet** (*Data Kontrak + Rekapitulasi*) dan **PDF Landscape** siap cetak. |
+| 🔔 **Reminder Kedaluwarsa** | Notifikasi in-app pada H-60, H-30, dan H-7 sebelum kontrak kedaluwarsa. |
+| 🔐 **Keamanan Berlapis (RBAC)** | JWT sliding session (15 menit timeout), Column-Level State Lock pada status kritis, audit log append-only, dan No-DELETE retention policy. |
 
-## 🎨 Brand Identity — Maslahat Connect
-
-| Token | Value | Penggunaan |
-|-------|-------|-----------|
-| Primary | `#008A85` — Deep Teal (teal-700) | Navbar, sidebar aktif, primary button |
-| Accent | `#F3A912` — Warm Gold (amber-500) | CTA menonjol, badge ✨ AUTO, chart highlight |
-| Background | `#F8FAFC` — Warm slate-50 | Body |
-| Surface | `#FFFFFF` + `slate-200` border | Card, modal, sheet |
-| Font | Manrope (heading) + Plus Jakarta Sans (body) | — |
+---
 
 ## 🛠️ Tech Stack
 
 ```
-┌─ Frontend ──────────────────────────────────┐    ┌─ Backend ────────────────────────────┐
-│ React 19 + React Router 7                   │◄──►│ FastAPI (async) + Uvicorn            │
-│ Tailwind CSS 3 + shadcn/ui + Lucide Icons   │    │ Motor (Mongo async) + PyMongo        │
-│ Recharts (analytics) + Mammoth.js (.docx)   │    │ PyJWT + bcrypt + Pydantic v2         │
-│ Axios (with X-New-Token auto-refresh)       │    │ python-docx / openpyxl / reportlab   │
-│ Sonner (toast)                              │    │ Emergent Object Storage integration  │
-└─────────────────────────────────────────────┘    └──────────────────────────────────────┘
-                            │                                        │
-                            └────────  MongoDB (crs_maslahat) ───────┘
+┌─────────────────────────────────────────┐          ┌─────────────────────────────────────────┐
+│           FRONTEND (React 19)           │          │          BACKEND (FastAPI / Py3)        │
+│ • React Router 7 + Tailwind CSS 3       │◄────────►│ • Uvicorn + Motor (Async MongoDB)      │
+│ • Shadcn/UI + Lucide Icons + Recharts   │  HTTP    │ • PyJWT + Bcrypt + Pydantic v2          │
+│ • Mammoth.js (.docx parser) + Sonner    │  REST    │ • python-docx / openpyxl / reportlab    │
+│ • Axios (Sliding Token Interceptor)     │          │ • Local Storage + Watermarking Engine   │
+└─────────────────────────────────────────┘          └─────────────────────────────────────────┘
+                     │                                                    │
+                     └────────────────── MongoDB 6+ ──────────────────────┘
 ```
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Panduan Instalasi & Menjalankan (Step-by-Step)
 
-> **TL;DR:** clone → set 2 env files → 2 perintah instalasi → 2 perintah run. Selesai dalam < 5 menit.
+Ikuti langkah-langkah berikut untuk meng-clone dan menjalankan program CRS Maslahat di komputer/device baru:
 
-### 1️⃣ Prasyarat
+### 1️⃣ Prasyarat Sistem
 
-| Tool | Versi Minimum | Cek |
-|------|---------------|-----|
-| Python | 3.11+ | `python --version` |
-| Node.js | 20+ | `node --version` |
-| Yarn | 1.22+ (**wajib**, jika belum ada: `npm install -g yarn`) | `yarn --version` |
-| MongoDB | 6+ (Harus sudah **berjalan** di local atau Atlas) | `mongod --version` |
+Pastikan perangkat Anda sudah terinstal:
+- **Python**: Versi 3.11 atau lebih baru (`python --version`)
+- **Node.js**: Versi 20 atau lebih baru (`node --version`)
+- **Yarn / npm**: Disarankan Yarn 1.22+ (`yarn --version` atau `npm --version`)
+- **MongoDB**: MongoDB Server lokal berjalan di port `27017` atau koneksi string MongoDB Atlas ([Unduh MongoDB Community](https://www.mongodb.com/try/download/community)).
 
-> 💡 **Info MongoDB:** Jika menggunakan Windows dan belum terinstal, unduh installer dari [MongoDB Community Server](https://www.mongodb.com/try/download/community). Jika Anda menggunakan MongoDB Atlas, cukup sesuaikan `MONGO_URL` di file `.env`.
+---
 
-### 2️⃣ Clone & Struktur
+### 2️⃣ Clone Repository
+
+Buka terminal / PowerShell dan clone repository:
 
 ```bash
-git clone https://github.com/<org>/crs-maslahat.git
-cd crs-maslahat
-
-# Struktur
-# ├── backend/    ← FastAPI + Mongo
-# ├── frontend/   ← React + Tailwind
-# ├── .emergent/  ← cron.yml (reminder H-60/H-30)
-# └── memory/     ← PRD.md + test_credentials.md
+git clone https://github.com/rizkilahi/contract-repository-system-maslahat.git
+cd contract-repository-system-maslahat
 ```
 
-### 3️⃣ Konfigurasi Environment (2 file)
+---
 
-#### 📄 `backend/.env`
+### 3️⃣ Konfigurasi Environment File (`.env`)
+
+Salin file contoh konfigurasi `.env.example` ke `.env` pada folder `backend` dan `frontend`:
+
+#### A. Backend Environment:
+Buat file `backend/.env` (atau salin dari `backend/.env.example`):
 ```dotenv
-# Ganti dengan URL MongoDB Atlas jika tidak pakai lokal
-MONGO_URL="mongodb://localhost:27017"
-DB_NAME="crs_maslahat"
-CORS_ORIGINS="http://localhost:3000"
-
-# Ganti dengan hasil `python -c "import secrets; print(secrets.token_hex(32))"`
-JWT_SECRET="<64-hex-chars>"
-
-# Owner default — dipakai saat first startup untuk seed admin
-ADMIN_EMAIL="admin@bsimaslahat.co.id"
-ADMIN_PASSWORD="Admin@CRS2026"
-ADMIN_NAME="Admin CRS"
-
-# Universal LLM key (opsional — hanya jika ingin fitur AI di masa depan)
-EMERGENT_LLM_KEY=""
-
-APP_NAME="crs-maslahat"
-
-# Bearer secret untuk cron endpoint /api/cron/expiry-reminders
-WEBHOOK_CRON_SECRET="<generate-secrets.token_hex(32)>"
+MONGO_URL=mongodb://localhost:27017
+DB_NAME=crs_maslahat
+JWT_SECRET=crs-dev-jwt-secret-2026-maslahat-local
+APP_NAME=crs-maslahat
+WEBHOOK_CRON_SECRET=dev-cron-secret-2026
+ADMIN_EMAIL=admin@bsimaslahat.co.id
+ADMIN_PASSWORD=Admin@2026
+ADMIN_NAME=Admin CRS
 ```
+> 💡 *Jika menggunakan MongoDB Atlas, ubah `MONGO_URL` dengan connection string Atlas Anda.*
 
-#### 📄 `frontend/.env`
+#### B. Frontend Environment:
+Buat file `frontend/.env` (atau salin dari `frontend/.env.example`):
 ```dotenv
 REACT_APP_BACKEND_URL=http://localhost:8001
 ```
-> Di lingkungan cloud/Emergent, isi dengan URL preview publik. Jangan sertakan trailing slash.
 
-### 4️⃣ Install Dependencies (paralel — buka 2 terminal)
+---
 
-<table>
-<tr>
-<td width="50%">
+### 4️⃣ Install Dependencies
 
-**Terminal A — Backend**
+Buka 2 jendela terminal terpisah (satu untuk Backend, satu untuk Frontend):
+
+#### 🔹 Terminal 1 — Backend:
 ```bash
 cd backend
+
+# (Opsional) Buat Virtual Environment:
 python -m venv .venv
 
-# Mac/Linux:
-# source .venv/bin/activate
-# Windows Command Prompt:
-# .venv\Scripts\activate.bat
-# Windows PowerShell:
-.\.venv\Scripts\Activate.ps1
+# Aktivasi Virtual Environment:
+# Windows (PowerShell): .\.venv\Scripts\Activate.ps1
+# Windows (CMD): .venv\Scripts\activate.bat
+# Linux/Mac: source .venv/bin/activate
 
+# Install dependensi:
 pip install -r requirements.txt
 ```
 
-</td>
-<td width="50%">
-
-**Terminal B — Frontend**
+#### 🔹 Terminal 2 — Frontend:
 ```bash
 cd frontend
-yarn install                    # ⚠️ jangan npm install
+
+# Install dependensi via Yarn (direkomendasikan):
+yarn install
+
+# Atau jika menggunakan npm:
+# npm install
 ```
 
-</td>
-</tr>
-</table>
+---
 
-### 5️⃣ Jalankan (dua terminal tetap terpisah)
+### 5️⃣ Jalankan Aplikasi
 
-<table>
-<tr>
-<td width="50%">
+#### 🔹 Menjalankan Backend (`http://localhost:8001`):
 
-**Backend** — `http://localhost:8001`
+**Opsi A — Menggunakan Skrip Praktis (Windows):**
+```powershell
+.\start_backend.ps1
+```
+
+**Opsi B — Perintah Manual:**
 ```bash
 cd backend
-.\.venv\Scripts\Activate.ps1
-uvicorn server:app --reload --port 8001
+python -m uvicorn server:app --reload --host 127.0.0.1 --port 8001
 ```
 
-</td>
-<td width="50%">
+Saat backend pertama kali dijalankan, sistem secara otomatis:
+1. Membuat akun Admin default.
+2. Melakukan seeding 3 akun demo (Business Unit, Legal Officer, Manajemen).
+3. Melakukan seeding sampel data PKS dengan beragam variasi status alur.
 
-**Frontend** — `http://localhost:3000`
+---
+
+#### 🔹 Menjalankan Frontend (`http://localhost:3000`):
+
+**Opsi A — Menggunakan Skrip Praktis (Windows):**
+```powershell
+.\start_frontend.ps1
+```
+
+**Opsi B — Perintah Manual:**
 ```bash
 cd frontend
 yarn start
+# atau: npm start
 ```
-
-</td>
-</tr>
-</table>
-
-Startup pertama otomatis:
-- Buat admin dari `ADMIN_EMAIL` / `ADMIN_PASSWORD`
-- Seed 3 demo user (Business Unit, Legal Officer, Manajemen)
-- Seed 13 sample contracts mencakup 8 status berbeda
-- Backfill `reference_number` format `NN/NNN/PKS/BSI MASLAHAT/2026` untuk setiap kontrak
-
-### 6️⃣ Login & Explore 🎉
-
-Buka **http://localhost:3000** → klik salah satu **Akun Demo** di halaman login (auto-fill kredensial):
-
-| Role | Email | Password | Bisa Melakukan |
-|------|-------|----------|----------------|
-| **Admin** | `admin@bsimaslahat.co.id` | `Admin@CRS2026` | Manajemen user + Audit log (tidak edit kontrak) |
-| **Business Unit** | `bu@bsimaslahat.co.id` | `Demo@2026` | Draft, upload `.docx`/`.pdf`, ajukan review |
-| **Legal Officer** | `legal@bsimaslahat.co.id` | `Demo@2026` | Review, approve, request revision, verify |
-| **Manajemen** | `management@bsimaslahat.co.id` | `Demo@2026` | Monitoring READ-ONLY seluruh portofolio |
-
-> 📋 Tersedia juga di `memory/test_credentials.md` (otomatis diperbarui setiap startup).
 
 ---
 
-## 🏗️ Arsitektur Ringkas
+### 6️⃣ Akses Web & Akun Demo
 
-```
-User Browser
-    │
-    ├──► React SPA (localhost:3000)
-    │        └── Axios ─── X-New-Token interceptor (sliding refresh)
-    │
-    └──► FastAPI (localhost:8001)
-             ├── /api/auth/*         (JWT 15-min)
-             ├── /api/contracts/*    (RBAC + state lock)
-             ├── /api/files/*        (multipart → Emergent Object Storage)
-             ├── /api/dashboard/*    (KPI + analytics)
-             ├── /api/reports/*.xlsx / .pdf
-             ├── /api/notifications  (bell in-app)
-             ├── /api/admin/*        (audit-log, security-policy — admin only)
-             └── /api/cron/expiry-reminders (Bearer webhook, .emergent/crons.yml)
-                     │
-                     ▼
-             MongoDB Collections:
-             users · contracts · files · audit_logs (per-contract)
-             system_audit (global append-only) · notifications
-             comments · cron_runs
-```
+Buka browser dan akses: **[http://localhost:3000](http://localhost:3000)**
 
-## 🔐 Security Policy (Overview)
+Di halaman Login, tersedia **tombol Quick-Fill Akun Demo** sekali klik:
 
-| Rule | Implementasi |
-|------|--------------|
-| **JWT + 15-min inactivity** | Payload `{sub, email, role, businessUnitId, exp, iat}`. Sliding refresh via header `X-New-Token` bila sisa < 5 menit. |
-| **RBAC strict** | 4 role, **admin TIDAK punya bypass** untuk kontrak/upload. Enforced di `require_roles()` + `ALLOWED_TRANSITIONS`. |
-| **Column-Level State Lock** | Status `ready_for_signature / pending_final_verification / signed_active` mengunci field `contract_value / partner_name / effective_date`. |
-| **Audit Trail append-only** | Middleware log semua POST/PUT/PATCH/DELETE + GET `/api/files/*` ke `system_audit` (timestamp, user, role, method, path, ip, status_code). Tidak ada endpoint UPDATE/DELETE untuk koleksi ini. |
-| **No-DELETE (retensi data)** | Middleware short-circuit 405 untuk DELETE pada `/api/contracts /api/files /api/comments /api/versions`. Attempt tetap dicatat. |
+| Role Pengguna | Email Login | Password Default | Wewenang & Hak Akses |
+|---|---|---|---|
+| **Administrator** | `admin@bsimaslahat.co.id` | `Admin@2026` | Manajemen User & Audit Log Global (tidak mengubah kontrak) |
+| **Business Unit** | `bu@bsimaslahat.co.id` | `Demo@2026` | Mengajukan PKS, upload draft `.docx`/`.pdf`, revisi |
+| **Legal Officer** | `legal@bsimaslahat.co.id` | `Demo@2026` | Telaah PKS, review draft & scan, beri komentar, watermark, approval |
+| **Manajemen** | `management@bsimaslahat.co.id` | `Demo@2026` | Monitoring seluruh portofolio & analitik *(Read-Only)* |
 
-Ekspos matriks penuh via: `GET /api/admin/security-policy`
+> 📚 **Dokumentasi API Interaktif (Swagger UI)**: [http://localhost:8001/docs](http://localhost:8001/docs)
 
-## 🔄 Alur Status Kontrak
+---
 
-```
-drafting ──► submitted_for_review ──► under_legal_review ──► ready_for_signature
-    ▲                │                        │                        │
-    │                │ (Legal reject)         │ (revision)             │ (BU upload signed PDF)
-    │                ▼                        ▼                        ▼
-    └────── revision_required ◄──────────────┴────── pending_final_verification
-                                                             │
-                                                             ▼
-                                                       signed_active ──► (auto) expiring_soon → expired
-```
+## 🧪 Menjalankan Automated Test Suite
 
-## 🗂️ Cron / Scheduled Job
+Untuk memastikan seluruh fungsionalitas backend, otentikasi, transisi status, enkripsi/watermark, dan proteksi RBAC berfungsi 100%:
 
-`.emergent/crons.yml`:
-```yaml
-crons:
-  - name: expiry-reminders
-    cron: "0 1 * * *"        # 08:00 WIB harian
-    endpoint: "{{BASE_URL}}/api/cron/expiry-reminders"
-    method: POST
-    enabled: true
-```
-Cron mengeluarkan notifikasi in-app pada bucket **H-60 (55–65 hari)**, **H-30 (25–35)**, dan **H-7 (3–9)**. Idempotent lewat `X-Webhook-Id`.
-
-## 🧪 Cheat Sheet API
+Pastikan backend sedang berjalan di port `8001`, lalu jalankan:
 
 ```bash
-# Login sebagai BU
-curl -X POST $API/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"bu@bsimaslahat.co.id","password":"Demo@2026"}'
-
-# List kontrak (pakai token)
-curl $API/api/contracts -H "Authorization: Bearer $TOKEN"
-
-# Auto-fill dari .docx (server-side fallback)
-curl -X POST $API/api/contracts/extract-docx \
-  -H "Authorization: Bearer $TOKEN" -F "file=@draft.docx"
-
-# Unduh laporan Excel dengan filter BU
-curl -o portofolio.xlsx \
-  "$API/api/reports/portfolio.xlsx?token=$TOKEN&owning_bu=ZISWAF"
-
-# Trigger cron reminder (test manual — admin only)
-curl -X POST $API/api/admin/run-expiry-reminders \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+python tests/test_api.py
 ```
 
-## 🩺 Troubleshooting
+*Output yang diharapkan: **66/66 Passed (100% Score)**.*
 
-| Gejala | Solusi |
-|--------|--------|
-| Backend `ModuleNotFoundError` | Pastikan `source .venv/bin/activate` sebelum `pip install -r requirements.txt` |
-| Frontend `mammoth` not found | Wajib `yarn install`, jangan pakai npm |
-| Login gagal | Reset password admin: hapus record di collection `users`, restart backend → seed ulang |
-| `session_timeout (15 menit)` | Sliding refresh gagal jika CORS memblok `X-New-Token`. Pastikan `CORS_ORIGINS` di backend/.env berisi origin frontend. |
-| MongoDB connection refused | Pastikan `mongod` jalan, atau ganti `MONGO_URL` ke MongoDB Atlas SRV string |
-| `.env` tidak terbaca | Backend load dari `backend/.env` (bukan root). Frontend memerlukan `REACT_APP_` prefix. |
+---
 
-## 📄 Lisensi & Kontribusi
+## 🔄 Alur Siklus Hidup Status Kontrak
 
-Repositori internal BSI Maslahat. Kontribusi via feature-branch + PR. Semua perubahan pada auth/security **wajib** melalui review Legal + Compliance sesuai BRD.
+```
+[drafting] ───────────────► [submitted_for_review] ──► [under_legal_review] ──► [ready_for_signature]
+    ▲                              │                          │                         │
+    │                              │ (Legal reject intake)    │ (Legal minta revisi)    │ (BU upload scan PDF)
+    │                              ▼                          ▼                         ▼
+    └───────────────────── [revision_required] ◄──────────────┴─────────────── [pending_final_verification]
+                                                                                        │
+                                                                                        ▼
+                                                                                  [signed_active]
+                                                                                        │
+                                                                          (Auto via Cron / Expiry)
+                                                                                        ▼
+                                                                          [expiring_soon] ──► [expired]
+```
+
+---
+
+## 🔐 Ringkasan Aturan Keamanan & Integritas Data
+
+1. **Strict RBAC**: Administrator tidak memiliki *bypass* untuk memodifikasi nilai kontrak atau menyetujui PKS tanpa keterlibatan Legal Officer dan Business Unit.
+2. **Column-Level State Lock**: Pada status `ready_for_signature`, `pending_final_verification`, dan `signed_active`, field finansial & identitas (`contract_value`, `partner_name`, `effective_date`) **terkunci otomatis** dan tidak dapat dimanipulasi.
+3. **No-DELETE Data Retention Policy**: Endpoint penghapusan (`DELETE`) pada resource kontrak dan berkas ditolak dengan status HTTP 405 untuk menjaga kepatuhan audit.
+4. **Append-Only Audit Trail**: Setiap perubahan status, unggahan berkas, pembaruan metadata, dan unduhan dicatat permanen ke dalam `audit_logs` dan `system_audit`.
+
+---
+
+## 🩺 Panduan Troubleshooting
+
+| Kendala | Penyebab Umum | Solusi |
+|---|---|---|
+| `MongoDB connection refused` | Layanan MongoDB belum aktif di perangkat | Jalankan MongoDB service di Windows (`net start MongoDB` atau via Services), atau periksa `MONGO_URL` di `backend/.env`. |
+| `File ... cannot be loaded because running scripts is disabled` | Kebijakan ExecutionPolicy PowerShell di Windows | Jalankan PowerShell dengan `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` atau gunakan file `.ps1` yang sudah diperbarui / gunakan `CMD`. |
+| `Session Timed Out / Login Expired` | Token JWT kedaluwarsa (15 menit inaktivitas) | Login ulang menggunakan akun demo yang tersedia. |
+| `Upload File Gagal / Storage Error` | Direktori upload belum memiliki izin tulis | Sistem membuat folder `backend/uploads/` otomatis; pastikan aplikasi memiliki izin read/write pada folder tersebut. |
+
+---
 
 <div align="center">
 
----
-
-**Made with 🕌 for BSI Maslahat** · _Connecting Business Processes._
+**CRS Maslahat** · _Amanah, Profesional, dan Akuntabel untuk Pengelolaan Kontrak BSI Maslahat._
 
 </div>
