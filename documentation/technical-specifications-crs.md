@@ -1,48 +1,51 @@
 # TECHNICAL SPECIFICATIONS & ARCHITECTURE
+
 ## Project Name: Contract Repository System (CRS) - Phase 1 MVP
+
 **Document Version:** 6.0  
 **Author:** Senior IT Strategy Consultant  
-**Date:** 2026-08-27  
+**Date:** 2026-08-27
 
 ---
 
 ## Revision History
-| Version | Date | Description |
-| :--- | :--- | :--- |
-| **5.0** | 2026-08-26 | Initial consolidated version |
+
+| Version | Date       | Description                                                                                                                                                         |
+| :------ | :--------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **5.0** | 2026-08-26 | Initial consolidated version                                                                                                                                        |
 | **6.0** | 2026-08-27 | Alignment update: tech stack, schema, dan API diperbarui sesuai implementasi aktual (Python/FastAPI/MongoDB). Fitur bonus dan watermarking engine didokumentasikan. |
 
 ---
 
 ## 1. System Architecture Overview (Arsitektur Sistem)
 
-Sistem ini menggunakan arsitektur **Monolith Modern / Decoupled** dengan pemisahan fungsional yang jelas antara antarmuka pengguna (*Frontend*) dan logika bisnis serta data (*Backend*).
+Sistem ini menggunakan arsitektur **Monolith Modern / Decoupled** dengan pemisahan fungsional yang jelas antara antarmuka pengguna (_Frontend_) dan logika bisnis serta data (_Backend_).
 
-*   **Frontend Web App:** Dibangun menggunakan **React 18 (Create React App + Craco)** dengan penataan gaya **Tailwind CSS 3** + shadcn/ui component library.
-*   **Backend RESTful API:** **Python 3.11+ / FastAPI** dengan Uvicorn sebagai ASGI server. Dipilih karena performa async native, type-safety via Pydantic, dan ekosistem library Python yang kaya untuk manipulasi dokumen.
-*   **Database Engine:** **MongoDB** via Motor (async driver Python). Skema dokumen mempercepat iterasi MVP tanpa rigid schema migrations.
-*   **Persistent File Storage:** Local filesystem (`backend/uploads/`) untuk MVP. Kode S3-Compatible Cloud Storage sudah tersedia (dicomment) dan dapat diaktifkan.
+- **Frontend Web App:** Dibangun menggunakan **React 18 (Create React App + Craco)** dengan penataan gaya **Tailwind CSS 3** + shadcn/ui component library.
+- **Backend RESTful API:** **Python 3.11+ / FastAPI** dengan Uvicorn sebagai ASGI server. Dipilih karena performa async native, type-safety via Pydantic, dan ekosistem library Python yang kaya untuk manipulasi dokumen.
+- **Database Engine:** **MongoDB** via Motor (async driver Python). Skema dokumen mempercepat iterasi MVP tanpa rigid schema migrations.
+- **Persistent File Storage:** Local filesystem (`backend/uploads/`) untuk MVP. Kode S3-Compatible Cloud Storage sudah tersedia (dicomment) dan dapat diaktifkan.
 
 ---
 
 ## 2. Tech Stack Specification (Spesifikasi Teknologi)
 
-*   **Language:** JavaScript (ES6+) — Frontend; Python 3.11+ — Backend
-*   **Frontend Framework:** React 18 / Create React App + Craco
-*   **Styling Engine:** Tailwind CSS 3 + shadcn/ui
-*   **State Management:** React Context API (AuthContext)
-*   **Docx Parser Library:** `mammoth` (browser client-side) + `python-docx` (server-side)
-*   **PDF Manipulation Library:** `reportlab` (watermark overlay) + `pypdf` (PDF page merging)
-*   **Image Watermarking:** `Pillow (PIL)` untuk watermark diagonal pada JPG/PNG
-*   **Authentication:** JWT via `PyJWT` + `bcrypt`; sliding session 15 menit inaktivitas
-*   **Database Driver:** `Motor` (AsyncIOMotorClient)
-*   **Email Notifications:** `smtplib` (built-in Python) + SMTP config via environment variables
+- **Language:** JavaScript (ES6+) — Frontend; Python 3.11+ — Backend
+- **Frontend Framework:** React 18 / Create React App + Craco
+- **Styling Engine:** Tailwind CSS 3 + shadcn/ui
+- **State Management:** React Context API (AuthContext)
+- **Docx Parser Library:** `mammoth` (browser client-side) + `python-docx` (server-side)
+- **PDF Manipulation Library:** `reportlab` (watermark overlay) + `pypdf` (PDF page merging)
+- **Image Watermarking:** `Pillow (PIL)` untuk watermark diagonal pada JPG/PNG
+- **Authentication:** JWT via `PyJWT` + `bcrypt`; sliding session 15 menit inaktivitas
+- **Database Driver:** `Motor` (AsyncIOMotorClient)
+- **Email Notifications:** `smtplib` (built-in Python) + SMTP config via environment variables
 
 ---
 
 ## 3. MongoDB Document Schema (Skema Basis Data)
 
-Skema database menggunakan model dokumen MongoDB dengan versi kontrak di-*embed* sebagai nested array.
+Skema database menggunakan model dokumen MongoDB dengan versi kontrak di-_embed_ sebagai nested array.
 
 ```
    users ─────── audit_logs (per contract)
@@ -165,87 +168,98 @@ expiring_soon / expired
 ## 4. API Specification & Endpoints
 
 Semua request memerlukan `Authorization: Bearer <JWT_TOKEN>` kecuali `/api/auth/login`.  
-*Sliding session: token di-refresh via header `X-New-Token` jika sisa kurang dari 5 menit.*
+_Sliding session: token di-refresh via header `X-New-Token` jika sisa kurang dari 5 menit._
 
 ### 4.1 Auth
-| Method | Endpoint | Keterangan |
-| :--- | :--- | :--- |
+
+| Method | Endpoint          | Keterangan                           |
+| :----- | :---------------- | :----------------------------------- |
 | `POST` | `/api/auth/login` | Login, kembalikan JWT + user profile |
-| `GET` | `/api/auth/me` | Info user saat ini |
+| `GET`  | `/api/auth/me`    | Info user saat ini                   |
 
 ### 4.2 Meta & Guidelines (REQ-02)
-| Method | Endpoint | Keterangan |
-| :--- | :--- | :--- |
-| `GET` | `/api/meta/options` | Institution types, Owning BU list |
-| `GET` | `/api/guidelines` | Semua guidelines matrix |
-| `GET` | `/api/guidelines/{institution_type}` | Guidelines untuk: Yayasan / PT / Koperasi / Instansi Pemerintah / DKM / Perkumpulan / Perorangan |
+
+| Method | Endpoint                             | Keterangan                                                                                       |
+| :----- | :----------------------------------- | :----------------------------------------------------------------------------------------------- |
+| `GET`  | `/api/meta/options`                  | Institution types, Owning BU list                                                                |
+| `GET`  | `/api/guidelines`                    | Semua guidelines matrix                                                                          |
+| `GET`  | `/api/guidelines/{institution_type}` | Guidelines untuk: Yayasan / PT / Koperasi / Instansi Pemerintah / DKM / Perkumpulan / Perorangan |
 
 ### 4.3 Contracts
-| Method | Endpoint | Role | Keterangan |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/contracts` | Semua | List + filter (q, status, institution_type, owning_bu) |
-| `POST` | `/api/contracts` | business_unit | Buat kontrak baru (status awal: `drafting`) |
-| `GET` | `/api/contracts/{id}` | Semua | Detail kontrak |
-| `PUT` | `/api/contracts/{id}` | business_unit, legal_officer | Update metadata (column + state lock) |
-| `PATCH` | `/api/contracts/{id}/status` | business_unit, legal_officer | Transisi status (RBAC) |
-| `GET` | `/api/contracts/{id}/audit` | Semua | Audit log kontrak |
+
+| Method  | Endpoint                     | Role                         | Keterangan                                             |
+| :------ | :--------------------------- | :--------------------------- | :----------------------------------------------------- |
+| `GET`   | `/api/contracts`             | Semua                        | List + filter (q, status, institution_type, owning_bu) |
+| `POST`  | `/api/contracts`             | business_unit                | Buat kontrak baru (status awal: `drafting`)            |
+| `GET`   | `/api/contracts/{id}`        | Semua                        | Detail kontrak                                         |
+| `PUT`   | `/api/contracts/{id}`        | business_unit, legal_officer | Update metadata (column + state lock)                  |
+| `PATCH` | `/api/contracts/{id}/status` | business_unit, legal_officer | Transisi status (RBAC)                                 |
+| `GET`   | `/api/contracts/{id}/audit`  | Semua                        | Audit log kontrak                                      |
 
 ### 4.4 File Upload & Dual Review
-| Method | Endpoint | Role | Keterangan |
-| :--- | :--- | :--- | :--- |
+
+| Method | Endpoint                       | Role                         | Keterangan                                                              |
+| :----- | :----------------------------- | :--------------------------- | :---------------------------------------------------------------------- |
 | `POST` | `/api/contracts/{id}/versions` | business_unit, legal_officer | Upload versi. **Auto-watermark** bila Legal upload .pdf/.jpg/.jpeg/.png |
-| `POST` | `/api/contracts/extract-docx` | Semua | Parse .docx ekstrak metadata (REQ-01) |
-| `GET` | `/api/files/{file_id}` | Auth | Download file |
-| `GET` | `/api/files/{file_id}/text` | Semua | Ekstrak teks dari .docx |
-| `GET` | `/api/contracts/{id}/comments` | Semua | Komentar dual review |
-| `POST` | `/api/contracts/{id}/comments` | Semua | Tambah komentar |
-| `POST` | `/api/comments/{id}/resolve` | legal_officer, admin | Resolve komentar |
+| `POST` | `/api/contracts/extract-docx`  | Semua                        | Parse .docx ekstrak metadata (REQ-01)                                   |
+| `GET`  | `/api/files/{file_id}`         | Auth                         | Download file                                                           |
+| `GET`  | `/api/files/{file_id}/text`    | Semua                        | Ekstrak teks dari .docx                                                 |
+| `GET`  | `/api/contracts/{id}/comments` | Semua                        | Komentar dual review                                                    |
+| `POST` | `/api/contracts/{id}/comments` | Semua                        | Tambah komentar                                                         |
+| `POST` | `/api/comments/{id}/resolve`   | legal_officer, admin         | Resolve komentar                                                        |
 
 ### 4.5 Dashboard, Analytics & Reports
-| Method | Endpoint | Keterangan |
-| :--- | :--- | :--- |
-| `GET` | `/api/dashboard/stats` | KPI: active, expiring, expired, pending |
-| `GET` | `/api/dashboard/analytics` | Analitik: by BU, by status, by institution, monthly |
-| `GET` | `/api/reports/portfolio.xlsx` | Export Excel portofolio PKS |
-| `GET` | `/api/reports/portfolio.pdf` | Export PDF portofolio PKS |
+
+| Method | Endpoint                      | Keterangan                                          |
+| :----- | :---------------------------- | :-------------------------------------------------- |
+| `GET`  | `/api/dashboard/stats`        | KPI: active, expiring, expired, pending             |
+| `GET`  | `/api/dashboard/analytics`    | Analitik: by BU, by status, by institution, monthly |
+| `GET`  | `/api/reports/portfolio.xlsx` | Export Excel portofolio PKS                         |
+| `GET`  | `/api/reports/portfolio.pdf`  | Export PDF portofolio PKS                           |
 
 ### 4.6 Notifications & Cron
-| Method | Endpoint | Keterangan |
-| :--- | :--- | :--- |
-| `GET` | `/api/notifications` | In-app notifications + unread count |
-| `POST` | `/api/notifications/{id}/read` | Tandai dibaca |
-| `POST` | `/api/notifications/read-all` | Tandai semua dibaca |
-| `POST` | `/api/cron/expiry-reminders` | Webhook cron H-60/H-30/H-7 (Bearer WEBHOOK_CRON_SECRET) |
-| `POST` | `/api/admin/run-expiry-reminders` | Manual trigger (admin only) |
+
+| Method | Endpoint                          | Keterangan                                              |
+| :----- | :-------------------------------- | :------------------------------------------------------ |
+| `GET`  | `/api/notifications`              | In-app notifications + unread count                     |
+| `POST` | `/api/notifications/{id}/read`    | Tandai dibaca                                           |
+| `POST` | `/api/notifications/read-all`     | Tandai semua dibaca                                     |
+| `POST` | `/api/cron/expiry-reminders`      | Webhook cron H-60/H-30/H-7 (Bearer WEBHOOK_CRON_SECRET) |
+| `POST` | `/api/admin/run-expiry-reminders` | Manual trigger (admin only)                             |
 
 ---
 
 ## 5. Security & Middleware Authorization Rules
 
 ### 5.1 RBAC Matrix
-| Role | Kontrak | Upload | Status | Laporan |
-| :--- | :--- | :--- | :--- | :--- |
-| **business_unit** | Milik owning BU | .docx + .pdf (state-gated) | drafting/submitted/pending | Read-only |
-| **legal_officer** | Semua | .docx/.pdf/.jpg/.jpeg/.png + **auto-watermark** | Review transitions | Read-only |
-| **management** | Semua (read-only) | — | — | Download |
-| **admin** | — (no contract edit) | — | — | Audit log |
+
+| Role              | Kontrak              | Upload                                          | Status                     | Laporan   |
+| :---------------- | :------------------- | :---------------------------------------------- | :------------------------- | :-------- |
+| **business_unit** | Milik owning BU      | .docx + .pdf (state-gated)                      | drafting/submitted/pending | Read-only |
+| **legal_officer** | Semua                | .docx/.pdf/.jpg/.jpeg/.png + **auto-watermark** | Review transitions         | Read-only |
+| **management**    | Semua (read-only)    | —                                               | —                          | Download  |
+| **admin**         | — (no contract edit) | —                                               | —                          | Audit log |
 
 ### 5.2 State & Column Lock
-*   `BU_EDITABLE_STATES`: `drafting`, `revision_required`
-*   `LOCKED_FIELDS`: `contract_value`, `partner_name`, `effective_date`
-*   `LOCKED_STATUSES`: `ready_for_signature`, `pending_final_verification`, `signed_active`
+
+- `BU_EDITABLE_STATES`: `drafting`, `revision_required`
+- `LOCKED_FIELDS`: `contract_value`, `partner_name`, `effective_date`
+- `LOCKED_STATUSES`: `ready_for_signature`, `pending_final_verification`, `signed_active`
 
 ### 5.3 Data Retention (REQ-06)
-*   Middleware memblokir `DELETE` pada `/api/contracts`, `/api/files`, `/api/comments`, `/api/versions` dengan HTTP 405.
-*   Semua mutating ops + file downloads dicatat ke `system_audit` (append-only).
+
+- Middleware memblokir `DELETE` pada `/api/contracts`, `/api/files`, `/api/comments`, `/api/versions` dengan HTTP 405.
+- Semua mutating ops + file downloads dicatat ke `system_audit` (append-only).
 
 ### 5.4 Watermarking Engine (REQ-03)
-*   **PDF:** `reportlab` membuat overlay "DRAFT - HASIL REVIU LEGAL" Helvetica-Bold 52pt, diagonal 45°, gray 30% opacity. `pypdf` merge ke setiap halaman.
-*   **JPG/PNG:** `Pillow` overlay teks diagonal, alpha ~30% (77/255).
-*   **Failsafe:** Jika gagal, file disimpan as-is + warning log. Tidak pernah error 500.
-*   **Audit:** Event `WATERMARK_INJECTED` dicatat di `audit_logs`.
+
+- **PDF:** `reportlab` membuat overlay "DRAFT - HASIL REVIU LEGAL" Helvetica-Bold 52pt, diagonal 45°, gray 30% opacity. `pypdf` merge ke setiap halaman.
+- **JPG/PNG:** `Pillow` overlay teks diagonal, alpha ~30% (77/255).
+- **Failsafe:** Jika gagal, file disimpan as-is + warning log. Tidak pernah error 500.
+- **Audit:** Event `WATERMARK_INJECTED` dicatat di `audit_logs`.
 
 ### 5.5 Email Config (REQ-05)
+
 ```env
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
@@ -253,8 +267,9 @@ SMTP_USER=user@domain.com
 SMTP_PASS=app_password
 SMTP_FROM=noreply@bsimaslahat.co.id
 ```
+
 Jika `SMTP_HOST` kosong, email di-skip gracefully. In-app notification tetap terkirim.
 
 ---
 
-*Dokumen teknis v6.0 ini sudah selaras dengan implementasi aktual kode di repository.*
+_Dokumen teknis v6.0 ini sudah selaras dengan implementasi aktual kode di repository._

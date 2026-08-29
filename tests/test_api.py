@@ -302,13 +302,36 @@ if contract_id and bu_token:
     check("POST /comments -> 200", r.status_code == 200, f"{r.status_code}: {r.text[:80]}")
     comment_id = r.json().get("id") if r.status_code == 200 else None
 
-    r = requests.get(f"{BASE_URL}/contracts/{contract_id}/comments", headers=auth(bu_token), timeout=10)
-    check("GET /comments -> 200", r.status_code == 200)
+    # BU attempt to resolve comment must be blocked with 403
+    if comment_id and bu_token:
+        r = requests.post(f"{BASE_URL}/comments/{comment_id}/resolve",
+                          headers=auth(bu_token), timeout=10)
+        check("BU cannot resolve comment -> 403", r.status_code == 403)
 
     if comment_id and legal_token:
         r = requests.post(f"{BASE_URL}/comments/{comment_id}/resolve",
                           headers=auth(legal_token), timeout=10)
         check("Legal resolve comment -> 200", r.status_code == 200)
+
+# ---- Section 10: NEW SECURITY & CONSISTENCY CHECKS ----
+section("10 - SECURITY HARDENING & CONSISTENCY VALIDATION")
+if admin_token:
+    # 1. Security Headers
+    r = requests.get(f"{BASE_URL}/", timeout=10)
+    check("Response has X-Content-Type-Options: nosniff", r.headers.get("x-content-type-options") == "nosniff")
+    check("Response has X-Frame-Options: SAMEORIGIN", r.headers.get("x-frame-options") == "SAMEORIGIN")
+
+    # 2. Regex Search Sanitization
+    r = requests.get(f"{BASE_URL}/contracts?q=[PKS].*+?^$", headers=auth(admin_token), timeout=10)
+    check("Special regex search chars sanitized -> 200", r.status_code == 200)
+
+    # 3. Export XLSX with submitted_for_review
+    r = requests.get(f"{BASE_URL}/reports/portfolio.xlsx?status=submitted_for_review", headers=auth(admin_token), timeout=15)
+    check("Export XLSX with submitted_for_review -> 200", r.status_code == 200)
+
+    # 4. Export PDF with submitted_for_review
+    r = requests.get(f"{BASE_URL}/reports/portfolio.pdf?status=submitted_for_review", headers=auth(admin_token), timeout=15)
+    check("Export PDF with submitted_for_review -> 200", r.status_code == 200)
 
 # ---- SUMMARY ----
 section("SUMMARY")

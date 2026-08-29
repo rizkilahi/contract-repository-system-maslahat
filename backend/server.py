@@ -44,6 +44,7 @@ APP_NAME = os.environ.get('APP_NAME', 'crs-maslahat')
 EMERGENT_KEY = os.environ.get('EMERGENT_LLM_KEY')
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
 WEBHOOK_CRON_SECRET = os.environ.get('WEBHOOK_CRON_SECRET', '')
+MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB max upload limit
 
 # ---------- SMTP Email Config (optional — skip gracefully if not set) ----------
 SMTP_HOST = os.environ.get('SMTP_HOST', '')
@@ -581,7 +582,16 @@ async def seed_sample_contracts():
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.contracts.create_index("contract_id", unique=True)
+    await db.contracts.create_index("id", unique=True)
+    await db.contracts.create_index("owning_bu")
+    await db.contracts.create_index("status")
+    await db.contracts.create_index([("created_at", -1)])
     await db.audit_logs.create_index("contract_id")
+    await db.files.create_index("id", unique=True)
+    await db.files.create_index("contract_id")
+    await db.comments.create_index("contract_id")
+    await db.notifications.create_index([("user_id", 1), ("read", 1)])
+    await db.system_audit.create_index([("timestamp", -1)])
     await seed_users()
     await seed_sample_contracts()
     init_storage()
@@ -734,10 +744,11 @@ async def list_contracts(
     if status and status not in ("all", "expiring_soon", "expired"):
         query["status"] = status
     if q:
+        safe_q = re.escape(q.strip())
         query["$or"] = [
-            {"contract_id": {"$regex": q, "$options": "i"}},
-            {"partner_name": {"$regex": q, "$options": "i"}},
-            {"agreement_title": {"$regex": q, "$options": "i"}},
+            {"contract_id": {"$regex": safe_q, "$options": "i"}},
+            {"partner_name": {"$regex": safe_q, "$options": "i"}},
+            {"agreement_title": {"$regex": safe_q, "$options": "i"}},
         ]
     docs = await db.contracts.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     for d in docs:
@@ -815,6 +826,8 @@ async def update_contract_metadata(cid: str, body: ContractUpdate, user: dict = 
     current_status = doc.get("status", "drafting")
 
     if role == "business_unit":
+        if doc.get("owning_bu") != user.get("business_unit_id"):
+            raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
         if current_status not in BU_EDITABLE_STATES:
             raise HTTPException(403, {
                 "error": "State Locked",
@@ -926,6 +939,8 @@ async def upload_version(
     file_id = str(uuid.uuid4())
     path = f"{APP_NAME}/contracts/{cid}/{file_id}.{ext}"
     data = await file.read()
+    if len(data) > MAX_FILE_SIZE:
+        raise HTTPException(413, f"Ukuran file ({len(data)/(1024*1024):.1f}MB) melebihi batas maksimum {MAX_FILE_SIZE // (1024*1024)}MB")
 
     # REQ-03: Auto-inject watermark when Legal Officer uploads manual review scan (pdf/jpg/png)
     watermarked = False
@@ -976,12 +991,20 @@ async def download_file(file_id: str, token: Optional[str] = Query(None), author
     if not raw:
         raise HTTPException(401, "Auth required")
     try:
-        jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(raw, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except Exception:
         raise HTTPException(401, "Invalid token")
     rec = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
     if not rec:
         raise HTTPException(404, "File tidak ditemukan")
+
+    # Verify contract ownership for business_unit role
+    user_role = payload.get("role")
+    if user_role == "business_unit":
+        contract = await db.contracts.find_one({"id": rec.get("contract_id")}, {"_id": 0, "owning_bu": 1})
+        if contract and contract.get("owning_bu") != payload.get("businessUnitId"):
+            raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
+
     data, ct = get_object(rec["storage_path"])
     from starlette.responses import Response as StarletteResponse
     return StarletteResponse(
@@ -1063,6 +1086,8 @@ async def extract_docx_endpoint(file: UploadFile = File(...), user: dict = Depen
     if not (file.filename or "").lower().endswith(".docx"):
         raise HTTPException(400, "Hanya file .docx yang didukung")
     data = await file.read()
+    if len(data) > MAX_FILE_SIZE:
+        raise HTTPException(413, f"Ukuran file ({len(data)/(1024*1024):.1f}MB) melebihi batas maksimum {MAX_FILE_SIZE // (1024*1024)}MB")
     return extract_docx_metadata(data)
 
 @api.get("/files/{file_id}/text")
@@ -1070,6 +1095,10 @@ async def file_text(file_id: str, user: dict = Depends(get_current_user)):
     rec = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
     if not rec:
         raise HTTPException(404, "Tidak ditemukan")
+    if user.get("role") == "business_unit":
+        contract = await db.contracts.find_one({"id": rec.get("contract_id")}, {"_id": 0, "owning_bu": 1})
+        if contract and contract.get("owning_bu") != user.get("business_unit_id"):
+            raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
     data, _ = get_object(rec["storage_path"])
     if rec["original_filename"].lower().endswith(".docx"):
         meta = extract_docx_metadata(data)
@@ -1168,7 +1197,7 @@ async def add_comment(cid: str, body: CommentIn, user: dict = Depends(get_curren
     return {k: v for k, v in doc.items() if k != "_id"}
 
 @api.post("/comments/{comment_id}/resolve")
-async def resolve_comment(comment_id: str, user: dict = Depends(get_current_user)):
+async def resolve_comment(comment_id: str, user: dict = Depends(require_roles("legal_officer", "admin"))):
     await db.comments.update_one({"id": comment_id},
                                   {"$set": {"resolved": True, "resolved_by": user["name"], "resolved_at": now_iso()}})
     return {"ok": True}
@@ -1233,7 +1262,7 @@ async def _run_expiry_reminders():
                 </div>
                 </body></html>
                 """
-                send_reminder_email(to_email, f"[CRS] {title}", html_body)
+                await asyncio.to_thread(send_reminder_email, to_email, f"[CRS] {title}", html_body)
             created += 1
     logger.info(f"expiry-reminders: {created} notifications created")
 
@@ -1274,6 +1303,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 
 STATUS_LABEL_ID = {
     "drafting": "Drafting",
+    "submitted_for_review": "Submitted for Review",
     "under_legal_review": "Under Legal Review",
     "revision_required": "Revision Required",
     "ready_for_signature": "Ready for Signature",
@@ -1602,6 +1632,12 @@ async def security_and_audit_middleware(request: Request, call_next):
         )
 
     response = await call_next(request)
+
+    # Security Headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
     if method == "OPTIONS" or not path.startswith("/api/"):
         return response
