@@ -87,12 +87,18 @@ frontend/node_modules/.cache/default-development/5.pack
 .env
 .env.*
 *.env
+!.env.example
+!*.env.example
+!**/.env.example
 credentials.json
 *.key
 .credentials
 frontend/node_modules/.cache/default-development/10.pack
 
+
 # Maslahat CRS specific
 backend/uploads/
 frontend/playwright-report/
 frontend/test-results/
+frontend/tests/*.png
+

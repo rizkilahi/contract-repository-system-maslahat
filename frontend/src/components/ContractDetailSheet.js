@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api, API_BASE, formatApiError } from "@/lib/api";
 import { getFullBUName } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
@@ -47,7 +47,7 @@ export default function ContractDetailSheet({ open, onOpenChange, contractId, on
   const [uploading, setUploading] = useState(false);
   const [remarks, setRemarks] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!contractId) return;
     try {
       const [c, a] = await Promise.all([
@@ -57,8 +57,8 @@ export default function ContractDetailSheet({ open, onOpenChange, contractId, on
       setContract(c.data);
       setAudit(a.data);
     } catch (e) { toast.error(formatApiError(e?.response?.data?.detail)); }
-  };
-  useEffect(() => { if (open) load(); }, [open, contractId]);
+  }, [contractId]);
+  useEffect(() => { if (open) load(); }, [open, load]);
 
   const doStatus = async (v) => {
     try {

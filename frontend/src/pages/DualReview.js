@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getFullBUName } from "@/lib/utils";
 import { api, API_BASE, formatApiError } from "@/lib/api";
@@ -26,7 +26,7 @@ export default function DualReview() {
   const [section, setSection] = useState("draft");
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const c = await api.get(`/contracts/${id}`);
       setContract(c.data);
@@ -46,8 +46,9 @@ export default function DualReview() {
     } catch (e) {
       toast.error(formatApiError(e?.response?.data?.detail));
     } finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, [id]);
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
 
   const addComment = async () => {
     if (!newComment.trim()) return;

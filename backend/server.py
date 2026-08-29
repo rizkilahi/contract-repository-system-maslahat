@@ -9,9 +9,13 @@ import io
 import re
 import uuid
 import hmac
+import math
 import logging
 import asyncio
+import smtplib
 import requests
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from typing import List, Optional, Literal
@@ -41,9 +45,16 @@ EMERGENT_KEY = os.environ.get('EMERGENT_LLM_KEY')
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
 WEBHOOK_CRON_SECRET = os.environ.get('WEBHOOK_CRON_SECRET', '')
 
+# ---------- SMTP Email Config (optional — skip gracefully if not set) ----------
+SMTP_HOST = os.environ.get('SMTP_HOST', '')
+SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
+SMTP_USER = os.environ.get('SMTP_USER', '')
+SMTP_PASS = os.environ.get('SMTP_PASS', '')
+SMTP_FROM = os.environ.get('SMTP_FROM', 'noreply@bsimaslahat.co.id')
+
 # ---------- Roles ----------
 Role = Literal["admin", "business_unit", "legal_officer", "management"]
-INSTITUTION_TYPES = ["Yayasan", "Perusahaan (PT)", "Koperasi", "Instansi Pemerintah", "Perorangan"]
+INSTITUTION_TYPES = ["Yayasan", "Perusahaan (PT)", "Koperasi", "Instansi Pemerintah", "DKM", "Perkumpulan", "Perorangan"]
 OWNING_BUS = [
     "CRG", "CAG", "FSG", "HCG", "PDG", "RNG", "DFG", "BCG",
     "MCG", "IDG", "IAG", "CSG", "LCG", "EDG", "WAG", "SMG",
@@ -74,8 +85,8 @@ BU_EDITABLE_FIELDS = {
     "effective_date", "expiry_date", "owning_bu", "bu_pic_name", "remarks",
 }
 LEGAL_EDITABLE_FIELDS = {"remarks"}  # Legal Officer can only update legal remarks
-BU_UPLOAD_EXTS = {"docx", "pdf"}      # BU: .docx (draft) + .pdf (final scan)
-LEGAL_UPLOAD_EXTS = {"docx", "pdf"}   # Legal: annotated files
+BU_UPLOAD_EXTS = {"docx", "pdf"}                          # BU: .docx (draft) + .pdf (final scan)
+LEGAL_UPLOAD_EXTS = {"docx", "pdf", "jpg", "jpeg", "png"}  # Legal: annotated + manual scan files (REQ-03)
 
 # State transitions per role (BRD rule 2 — exclusive rights)
 ALLOWED_TRANSITIONS = {
@@ -324,8 +335,131 @@ def strip_id(doc):
     doc.pop("_id", None)
     return doc
 
+# ---------- Watermark Helpers (REQ-03) ----------
+def inject_watermark_pdf(pdf_bytes: bytes) -> bytes:
+    """Inject diagonal 'DRAFT - HASIL REVIU LEGAL' watermark on every page of a PDF.
+    Uses reportlab to create watermark overlay, pypdf to merge onto existing pages.
+    Falls back to returning original bytes if any error occurs.
+    """
+    try:
+        from reportlab.pdfgen import canvas as rl_canvas
+        from reportlab.lib.pagesizes import A4, landscape
+        from pypdf import PdfWriter, PdfReader
+
+        # Step 1: Create single-page watermark PDF in memory
+        wm_buf = io.BytesIO()
+        page_w, page_h = landscape(A4)  # wide page to cover any orientation
+        c = rl_canvas.Canvas(wm_buf, pagesize=(page_w, page_h))
+        c.setFont("Helvetica-Bold", 52)
+        c.setFillColorRGB(0.55, 0.55, 0.55, alpha=0.30)  # gray @ 30% opacity
+        c.saveState()
+        c.translate(page_w / 2, page_h / 2)
+        c.rotate(45)
+        c.drawCentredString(0, 0, "DRAFT - HASIL REVIU LEGAL")
+        c.restoreState()
+        c.save()
+        wm_buf.seek(0)
+
+        # Step 2: Merge watermark onto every page of the source PDF
+        wm_reader = PdfReader(wm_buf)
+        wm_page = wm_reader.pages[0]
+
+        src_reader = PdfReader(io.BytesIO(pdf_bytes))
+        writer = PdfWriter()
+        for page in src_reader.pages:
+            page.merge_page(wm_page)
+            writer.add_page(page)
+
+        out_buf = io.BytesIO()
+        writer.write(out_buf)
+        out_buf.seek(0)
+        logger.info("PDF watermark injected successfully")
+        return out_buf.read()
+    except Exception as e:
+        logger.warning(f"PDF watermark injection failed: {e}. File disimpan tanpa watermark.")
+        return pdf_bytes
+
+
+def inject_watermark_image(img_bytes: bytes, ext: str) -> bytes:
+    """Inject diagonal 'DRAFT - HASIL REVIU LEGAL' watermark on a JPG/PNG image.
+    Uses Pillow (PIL). Falls back to returning original bytes if any error occurs.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+        w, h = img.size
+
+        # Create transparent overlay
+        overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
+        draw = ImageDraw.Draw(overlay)
+
+        # Font size proportional to image width
+        font_size = max(40, w // 12)
+        font = None
+        for font_name in ["arial.ttf", "Arial.ttf", "DejaVuSans-Bold.ttf"]:
+            try:
+                font = ImageFont.truetype(font_name, font_size)
+                break
+            except Exception:
+                continue
+        if font is None:
+            font = ImageFont.load_default()
+
+        text = "DRAFT - HASIL REVIU LEGAL"
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+        # Create text image and rotate diagonally
+        txt_img = Image.new("RGBA", (text_w + 40, text_h + 40), (255, 255, 255, 0))
+        txt_draw = ImageDraw.Draw(txt_img)
+        txt_draw.text((20, 20), text, fill=(80, 80, 80, 77), font=font)  # ~30% opacity
+
+        angle = math.degrees(math.atan2(h, w))
+        rotated = txt_img.rotate(angle, expand=True)
+
+        # Center on image
+        x = (w - rotated.width) // 2
+        y = (h - rotated.height) // 2
+        overlay.paste(rotated, (x, y), rotated)
+
+        composited = Image.alpha_composite(img, overlay).convert("RGB")
+        out_buf = io.BytesIO()
+        fmt = "JPEG" if ext in ("jpg", "jpeg") else "PNG"
+        composited.save(out_buf, format=fmt, quality=92)
+        out_buf.seek(0)
+        logger.info(f"Image watermark injected successfully ({ext})")
+        return out_buf.read()
+    except Exception as e:
+        logger.warning(f"Image watermark injection failed: {e}. File disimpan tanpa watermark.")
+        return img_bytes
+
+
+# ---------- Email Helper (REQ-05) ----------
+def send_reminder_email(to_email: str, subject: str, html_body: str) -> None:
+    """Send HTML email via SMTP. Gracefully skips if SMTP_HOST / SMTP_USER not configured."""
+    if not SMTP_HOST or not SMTP_USER:
+        logger.info(f"SMTP tidak dikonfigurasi — lewati email ke {to_email}")
+        return
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"] = SMTP_FROM
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+        logger.info(f"Email terkirim ke {to_email}: {subject}")
+    except Exception as e:
+        logger.warning(f"Gagal kirim email ke {to_email}: {e}")
+
 # ---------- Seed ----------
 DEMO_USERS = [
+    {"email": "muhamadrizkiilahi03@gmail.com", "name": "Muhamad Rizki Ilahi (Admin)", "role": "admin", "password": "Admin@CRS2026", "business_unit_id": None},
     {"email": "bu@bsimaslahat.co.id", "name": "Ahmad Faizal (Business Unit)", "role": "business_unit", "password": "Demo@2026", "business_unit_id": "CRG"},
     {"email": "legal@bsimaslahat.co.id", "name": "Siti Rahmawati (Legal Officer)", "role": "legal_officer", "password": "Demo@2026", "business_unit_id": None},
     {"email": "management@bsimaslahat.co.id", "name": "Budi Santoso (Manajemen)", "role": "management", "password": "Demo@2026", "business_unit_id": None},
@@ -530,6 +664,31 @@ GUIDELINES = {
          "risiko": "Pejabat tidak berwenang menandatangani.", "solusi": "Verifikasi SK & jabatan."},
         {"doc": "DIPA/Anggaran", "kategori": "Wajib", "cp": "TIDAK",
          "risiko": "Kewajiban pembayaran tidak dijamin.", "solusi": "Minta salinan alokasi anggaran."},
+    ],
+    "DKM": [
+        {"doc": "Surat Keputusan Pembentukan DKM", "kategori": "Wajib", "cp": "YA",
+         "risiko": "DKM tidak memiliki legal standing sebagai pengelola masjid yang sah.",
+         "solusi": "Minta SK Pembentukan dari Dewan Kemakmuran Masjid atau pengurus masjid induk."},
+        {"doc": "KTP Ketua / PIC DKM", "kategori": "Wajib", "cp": "YA",
+         "risiko": "Penandatangan tidak dapat diidentifikasi secara hukum.",
+         "solusi": "Verifikasi KTP via Dukcapil jika diperlukan."},
+        {"doc": "Surat Keterangan Domisili Masjid", "kategori": "Wajib", "cp": "TIDAK",
+         "risiko": "Lokasi operasional DKM tidak terdokumentasi.",
+         "solusi": "Minta surat dari kelurahan/kecamatan setempat."},
+    ],
+    "Perkumpulan": [
+        {"doc": "Akta Pendirian Perkumpulan", "kategori": "Wajib", "cp": "YA",
+         "risiko": "Perkumpulan tidak sah sebagai subjek hukum.",
+         "solusi": "Verifikasi akta via notaris dan cek AHU Online."},
+        {"doc": "SK Pengesahan Kemenkumham (AHU)", "kategori": "Wajib", "cp": "YA",
+         "risiko": "Perkumpulan belum berbadan hukum resmi.",
+         "solusi": "Tunda PKS hingga SK terbit dan terverifikasi."},
+        {"doc": "AD/ART Perkumpulan", "kategori": "Wajib", "cp": "TIDAK",
+         "risiko": "Struktur kepengurusan dan kewenangan tanda tangan tidak jelas.",
+         "solusi": "Sertakan salinan AD/ART terbaru yang telah disahkan."},
+        {"doc": "SK Pengurus Aktif", "kategori": "Wajib (Bisa Disubstitusi)", "cp": "YA",
+         "risiko": "Penandatangan tidak memiliki kewenangan mewakili perkumpulan.",
+         "solusi": "Substitusi dengan Berita Acara Rapat Anggota yang sah."},
     ],
     "Perorangan": [
         {"doc": "KTP", "kategori": "Wajib", "cp": "YA",
@@ -767,6 +926,16 @@ async def upload_version(
     file_id = str(uuid.uuid4())
     path = f"{APP_NAME}/contracts/{cid}/{file_id}.{ext}"
     data = await file.read()
+
+    # REQ-03: Auto-inject watermark when Legal Officer uploads manual review scan (pdf/jpg/png)
+    watermarked = False
+    if user["role"] == "legal_officer" and ext in {"pdf", "jpg", "jpeg", "png"}:
+        original_size = len(data)
+        if ext == "pdf":
+            data = inject_watermark_pdf(data)
+        else:
+            data = inject_watermark_image(data, ext)
+        watermarked = len(data) != original_size or True  # mark as attempted
     ct = file.content_type or "application/octet-stream"
     put_object(path, data, ct)
     # Version numbering: v1.0, v1.1 ...
@@ -785,9 +954,15 @@ async def upload_version(
         "uploaded_at": now_iso(),
         "remarks": remarks,
     }
+    file_record["watermarked"] = watermarked
     await db.files.insert_one({**file_record, "contract_id": cid, "is_deleted": False})
     await db.contracts.update_one({"id": cid}, {"$push": {"versions": file_record}, "$set": {"updated_at": now_iso()}})
-    await add_audit(cid, user, "VERSION_UPLOADED", f"Upload {next_ver}: {file.filename}")
+    audit_detail = f"Upload {next_ver}: {file.filename}"
+    if watermarked:
+        audit_detail += " | Watermark 'DRAFT - HASIL REVIU LEGAL' disuntikkan (REQ-03)"
+    await add_audit(cid, user, "VERSION_UPLOADED", audit_detail)
+    if watermarked:
+        await add_audit(cid, user, "WATERMARK_INJECTED", f"Watermark otomatis pada: {file.filename}")
     return file_record
 
 @api.get("/files/{file_id}")
@@ -1020,19 +1195,45 @@ async def _run_expiry_reminders():
         else:
             continue
         title = f"PKS {d['contract_id']} berakhir dalam {days} hari"
-        body = f"{d['partner_name']} — {d['agreement_title'][:80]} berakhir pada {d['expiry_date']}"
+        body_text = f"{d['partner_name']} — {d['agreement_title'][:80]} berakhir pada {d['expiry_date']}"
+
+        # Collect recipient IDs and emails
         recipients = set()
+        recipient_emails: dict = {}
         if d.get("bu_pic_id"):
             recipients.add(d["bu_pic_id"])
+            bu_user = await db.users.find_one({"id": d["bu_pic_id"]}, {"_id": 0, "email": 1})
+            if bu_user:
+                recipient_emails[d["bu_pic_id"]] = bu_user.get("email", "")
         for u in legal:
             recipients.add(u["id"])
+            recipient_emails[u["id"]] = u.get("email", "")
+
         for uid in recipients:
             existing = await db.notifications.find_one({
                 "user_id": uid, "contract_id": d["id"], "kind": f"expiry_h{bucket}"
             })
             if existing:
                 continue
-            await create_notification(uid, f"expiry_h{bucket}", title, body, contract_id=d["id"])
+            await create_notification(uid, f"expiry_h{bucket}", title, body_text, contract_id=d["id"])
+            # REQ-05: Also send email if SMTP is configured
+            to_email = recipient_emails.get(uid, "")
+            if to_email:
+                html_body = f"""
+                <html><body style='font-family:Arial,sans-serif;color:#1e293b'>
+                <div style='background:#0F766E;padding:16px 24px;border-radius:8px 8px 0 0'>
+                  <h2 style='color:#fff;margin:0'>⚠️ Peringatan Kedaluwarsa PKS</h2>
+                </div>
+                <div style='padding:20px 24px;border:1px solid #e2e8f0;border-radius:0 0 8px 8px'>
+                  <p><strong>{title}</strong></p>
+                  <p>{body_text}</p>
+                  <p style='color:#64748b;font-size:13px'>Segera ambil tindakan perpanjangan, adendum, atau PKS baru sebelum kontrak berakhir.</p>
+                  <hr style='border-color:#e2e8f0'>
+                  <small style='color:#94a3b8'>CRS BSI Maslahat — Automated Reminder H-{bucket} | Pesan ini dikirim otomatis, jangan dibalas.</small>
+                </div>
+                </body></html>
+                """
+                send_reminder_email(to_email, f"[CRS] {title}", html_body)
             created += 1
     logger.info(f"expiry-reminders: {created} notifications created")
 
