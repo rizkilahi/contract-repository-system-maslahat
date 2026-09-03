@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import StatusBadge from "@/components/StatusBadge";
-import { ArrowLeft, FileText, FileCheck2, MessageSquarePlus, CheckCircle2, Sparkles, Clock } from "lucide-react";
+import { ArrowLeft, FileText, FileCheck2, MessageSquarePlus, CheckCircle2, Sparkles, Clock, ExternalLink, Download } from "lucide-react";
 
 const fmtDT = (s) => new Date(s).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
@@ -70,7 +70,8 @@ export default function DualReview() {
   if (loading) return <div className="text-sm text-slate-500 p-8">Memuat viewer...</div>;
   if (!contract) return <div className="text-sm text-slate-500 p-8">Kontrak tidak ditemukan</div>;
 
-  const signedUrl = signedFile ? `${API_BASE}/files/${signedFile.id}?token=${localStorage.getItem("crs_token")}` : null;
+  const signedUrl = signedFile ? `${API_BASE}/files/${signedFile.id}?token=${localStorage.getItem("crs_token")}&inline=1` : null;
+  const downloadUrl = signedFile ? `${API_BASE}/files/${signedFile.id}?token=${localStorage.getItem("crs_token")}` : null;
   const isPdf = signedFile?.original_filename?.toLowerCase().endsWith(".pdf");
 
   return (
@@ -139,7 +140,34 @@ export default function DualReview() {
               <FileCheck2 className="h-4 w-4 text-emerald-700" />
               <p className="text-sm font-semibold text-slate-900">Scan Tandatangan</p>
             </div>
-            {signedFile ? <Badge className="bg-emerald-100 text-emerald-700 border-0 font-mono">{signedFile.version}</Badge> : <span className="text-xs text-slate-400">Belum diunggah</span>}
+            <div className="flex items-center gap-2">
+              {signedFile ? (
+                <>
+                  <Badge className="bg-emerald-100 text-emerald-700 border-0 font-mono">{signedFile.version}</Badge>
+                  <a
+                    href={signedUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Buka dokumen di tab baru"
+                    className="inline-flex items-center gap-1 text-xs text-slate-600 hover:text-emerald-700 bg-white border border-slate-200 hover:border-emerald-300 rounded px-2 py-1 transition-colors"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    <span>Tab Baru</span>
+                  </a>
+                  <a
+                    href={downloadUrl}
+                    download={signedFile.original_filename}
+                    title="Unduh file scan"
+                    className="inline-flex items-center gap-1 text-xs text-slate-600 hover:text-emerald-700 bg-white border border-slate-200 hover:border-emerald-300 rounded px-2 py-1 transition-colors"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>Unduh</span>
+                  </a>
+                </>
+              ) : (
+                <span className="text-xs text-slate-400">Belum diunggah</span>
+              )}
+            </div>
           </div>
           <div className="max-h-[70vh] overflow-hidden bg-slate-100">
             {signedUrl && isPdf ? (

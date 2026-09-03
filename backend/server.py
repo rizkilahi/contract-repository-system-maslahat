@@ -278,6 +278,25 @@ class UserOut(BaseModel):
     email: EmailStr
     name: str
     role: str
+    business_unit_id: Optional[str] = None
+    is_active: bool = True
+
+class CreateUserIn(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str
+    business_unit_id: Optional[str] = None
+    is_active: bool = True
+
+class UpdateUserIn(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    business_unit_id: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class ResetPasswordIn(BaseModel):
+    new_password: str
 
 class ContractIn(BaseModel):
     partner_name: str
@@ -621,6 +640,8 @@ async def login(body: LoginIn):
     user = await db.users.find_one({"email": body.email.lower()})
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(401, "Email atau password salah")
+    if user.get("is_active") is False:
+        raise HTTPException(403, "Akun Anda telah dinonaktifkan oleh Administrator. Silakan hubungi admin.")
     token = create_access_token(user["id"], user["email"], user["role"], user.get("business_unit_id"))
     return {
         "token": token,
@@ -981,7 +1002,12 @@ async def upload_version(
     return file_record
 
 @api.get("/files/{file_id}")
-async def download_file(file_id: str, token: Optional[str] = Query(None), authorization: Optional[str] = Header(None)):
+async def download_file(
+    file_id: str,
+    token: Optional[str] = Query(None),
+    inline: bool = Query(False),
+    authorization: Optional[str] = Header(None)
+):
     # Manual auth (support ?token= for direct browser download links)
     raw = None
     if authorization and authorization.startswith("Bearer "):
@@ -1006,18 +1032,165 @@ async def download_file(file_id: str, token: Optional[str] = Query(None), author
             raise HTTPException(403, "Akses ditolak: Kontrak bukan milik unit kerja Anda")
 
     data, ct = get_object(rec["storage_path"])
+    disp = "inline" if inline else "attachment"
     from starlette.responses import Response as StarletteResponse
     return StarletteResponse(
         content=data,
         media_type=rec.get("content_type") or ct,
-        headers={"Content-Disposition": f'attachment; filename="{rec["original_filename"]}"'}
+        headers={"Content-Disposition": f'{disp}; filename="{rec["original_filename"]}"'}
     )
 
 # ---------- Users (admin) ----------
 @api.get("/users")
-async def list_users(user: dict = Depends(require_roles("admin"))):
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(500)
+async def list_users(
+    q: Optional[str] = Query(None),
+    role: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    user: dict = Depends(require_roles("admin", "management"))
+):
+    query = {}
+    if role and role != "all":
+        query["role"] = role
+    if status == "active":
+        query["is_active"] = {"$ne": False}
+    elif status == "inactive":
+        query["is_active"] = False
+    if q:
+        query["$or"] = [
+            {"name": {"$regex": q, "$options": "i"}},
+            {"email": {"$regex": q, "$options": "i"}},
+        ]
+    users = await db.users.find(query, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
     return users
+
+@api.post("/users")
+async def create_user(body: CreateUserIn, user: dict = Depends(require_roles("admin"))):
+    email_clean = body.email.strip().lower()
+    existing = await db.users.find_one({"email": email_clean})
+    if existing:
+        raise HTTPException(400, "Email sudah terdaftar dalam sistem")
+    
+    valid_roles = ["admin", "business_unit", "legal_officer", "management"]
+    if body.role not in valid_roles:
+        raise HTTPException(400, f"Role tidak valid. Pilihan: {valid_roles}")
+    
+    if len(body.password.strip()) < 6:
+        raise HTTPException(400, "Password minimal 6 karakter")
+
+    bu_id = body.business_unit_id if body.role == "business_unit" else None
+    new_id = str(uuid.uuid4())
+    doc = {
+        "id": new_id,
+        "email": email_clean,
+        "name": body.name.strip(),
+        "role": body.role,
+        "business_unit_id": bu_id,
+        "is_active": body.is_active,
+        "password_hash": hash_password(body.password),
+        "created_at": now_iso(),
+        "created_by": user["email"]
+    }
+    await db.users.insert_one(doc)
+    doc_out = {k: v for k, v in doc.items() if k not in ("_id", "password_hash")}
+    
+    # Audit trail
+    await db.system_audit.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "action": "USER_CREATED",
+        "detail": f"Membuat pengguna baru {body.name} ({email_clean}) dengan role {body.role}",
+        "timestamp": now_iso()
+    })
+    return doc_out
+
+@api.put("/users/{user_id}")
+async def update_user(user_id: str, body: UpdateUserIn, user: dict = Depends(require_roles("admin"))):
+    existing = await db.users.find_one({"id": user_id})
+    if not existing:
+        raise HTTPException(404, "Pengguna tidak ditemukan")
+    
+    # Self-lockout prevention
+    if user["id"] == user_id:
+        if body.is_active is False:
+            raise HTTPException(400, "Anda tidak dapat menonaktifkan akun Anda sendiri demi keamanan sistem")
+        if body.role and body.role != "admin":
+            raise HTTPException(400, "Anda tidak dapat mencabut hak Administrator dari akun Anda sendiri")
+    
+    updates = {}
+    if body.name is not None and body.name.strip():
+        updates["name"] = body.name.strip()
+    if body.role is not None:
+        valid_roles = ["admin", "business_unit", "legal_officer", "management"]
+        if body.role not in valid_roles:
+            raise HTTPException(400, f"Role tidak valid. Pilihan: {valid_roles}")
+        updates["role"] = body.role
+        if body.role != "business_unit":
+            updates["business_unit_id"] = None
+    if body.business_unit_id is not None and (body.role == "business_unit" or existing.get("role") == "business_unit"):
+        updates["business_unit_id"] = body.business_unit_id
+    if body.is_active is not None:
+        updates["is_active"] = body.is_active
+    
+    if updates:
+        updates["updated_at"] = now_iso()
+        await db.users.update_one({"id": user_id}, {"$set": updates})
+        
+        await db.system_audit.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "user_email": user["email"],
+            "action": "USER_UPDATED",
+            "detail": f"Memperbarui akun {existing['email']}: {list(updates.keys())}",
+            "timestamp": now_iso()
+        })
+    
+    updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return updated
+
+@api.post("/users/{user_id}/reset-password")
+async def reset_password(user_id: str, body: ResetPasswordIn, user: dict = Depends(require_roles("admin"))):
+    existing = await db.users.find_one({"id": user_id})
+    if not existing:
+        raise HTTPException(404, "Pengguna tidak ditemukan")
+    
+    if not body.new_password or len(body.new_password.strip()) < 6:
+        raise HTTPException(400, "Password minimal 6 karakter")
+    
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso()}}
+    )
+    
+    await db.system_audit.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "action": "USER_PASSWORD_RESET",
+        "detail": f"Reset password untuk pengguna {existing['email']}",
+        "timestamp": now_iso()
+    })
+    return {"status": "ok", "message": f"Password untuk {existing['email']} berhasil diatur ulang"}
+
+@api.delete("/users/{user_id}")
+async def delete_or_deactivate_user(user_id: str, user: dict = Depends(require_roles("admin"))):
+    existing = await db.users.find_one({"id": user_id})
+    if not existing:
+        raise HTTPException(404, "Pengguna tidak ditemukan")
+    if user["id"] == user_id:
+        raise HTTPException(400, "Anda tidak dapat menghapus akun Anda sendiri")
+    
+    await db.users.update_one({"id": user_id}, {"$set": {"is_active": False, "deleted_at": now_iso()}})
+    
+    await db.system_audit.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "action": "USER_DEACTIVATED",
+        "detail": f"Menonaktifkan pengguna {existing['email']}",
+        "timestamp": now_iso()
+    })
+    return {"status": "ok", "message": f"Pengguna {existing['email']} berhasil dinonaktifkan"}
 
 # ---------- DOCX Auto-Fill ----------
 ID_MONTHS = {"januari":1,"februari":2,"maret":3,"april":4,"mei":5,"juni":6,"juli":7,

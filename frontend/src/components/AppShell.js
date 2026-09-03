@@ -3,7 +3,8 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth, ROLE_LABEL } from "@/context/AuthContext";
 import {
   LayoutDashboard, FileText, FilePlus2, Users, LogOut,
-  ChevronLeft, ChevronRight, Search, ShieldCheck, AlertOctagon, MessageCircleQuestion, BarChart3
+  ChevronLeft, ChevronRight, ChevronDown, Search, ShieldCheck, AlertOctagon, MessageCircleQuestion, BarChart3,
+  Shield, LayoutGrid, SlidersHorizontal
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import NotificationBell from "@/components/NotificationBell";
@@ -20,11 +21,18 @@ const NAV = [
   { to: "/contracts", label: "Repositori Kontrak", icon: FileText, roles: ["admin","business_unit","legal_officer","management"] },
   { to: "/analytics", label: "Analitik Portofolio", icon: BarChart3, roles: ["admin","business_unit","legal_officer","management"] },
   { to: "/submit", label: "Pengajuan PKS Baru", icon: FilePlus2, roles: ["admin","business_unit"] },
-  { to: "/users", label: "Manajemen Pengguna", icon: Users, roles: ["admin"] },
+  { to: "/users", label: "Manajemen Pengguna & Akses", icon: Users, roles: ["admin"] },
+];
+
+const RBAC_NAV = [
+  { to: "/rbac/roles", label: "Role & Akses", icon: Shield },
+  { to: "/rbac/matrix", label: "Perbandingan Akses", icon: LayoutGrid },
+  { to: "/rbac/catalog", label: "Katalog Akses", icon: SlidersHorizontal },
 ];
 
 export default function AppShell({ children }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [rbacOpen, setRbacOpen] = useState(true);
   const { user, logout } = useAuth();
   const nav = useNavigate();
 
@@ -108,6 +116,70 @@ export default function AppShell({ children }) {
                   </NavLink>
                 );
               })}
+
+              {/* RBAC Menu Group for Admin & Management */}
+              {["admin", "management"].includes(user?.role) && !collapsed && (
+                <div className="pt-2 border-t border-slate-200/80 my-2">
+                  <button
+                    type="button"
+                    onClick={() => setRbacOpen(!rbacOpen)}
+                    data-testid="sidebar-rbac-toggle"
+                    className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-teal-800 hover:text-teal-950 transition-colors"
+                  >
+                    <span>RBAC</span>
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${rbacOpen ? "" : "-rotate-90"}`} />
+                  </button>
+                  {rbacOpen && (
+                    <div className="mt-1 space-y-1">
+                      {RBAC_NAV.map((sub) => {
+                        const SubIcon = sub.icon;
+                        return (
+                          <NavLink
+                            key={sub.to}
+                            to={sub.to}
+                            data-testid={`nav-rbac-${sub.to.split("/").pop()}`}
+                            className={({ isActive }) =>
+                              `group flex items-center gap-3 rounded-lg px-3 py-2 text-xs md:text-sm font-medium transition-colors ${
+                                isActive
+                                  ? "bg-teal-50 text-teal-700 font-semibold border-l-4 border-teal-600 pl-2"
+                                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                              }`
+                            }
+                          >
+                            <SubIcon className="h-4 w-4 shrink-0 text-slate-500 group-hover:text-teal-700" strokeWidth={1.75} />
+                            <span className="truncate">{sub.label}</span>
+                          </NavLink>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {["admin", "management"].includes(user?.role) && collapsed && (
+                <div className="pt-2 border-t border-slate-200/80 my-2 space-y-1">
+                  {RBAC_NAV.map((sub) => {
+                    const SubIcon = sub.icon;
+                    return (
+                      <NavLink
+                        key={sub.to}
+                        to={sub.to}
+                        title={sub.label}
+                        data-testid={`nav-rbac-${sub.to.split("/").pop()}`}
+                        className={({ isActive }) =>
+                          `group flex items-center justify-center rounded-lg p-2.5 text-sm transition-colors ${
+                            isActive
+                              ? "bg-teal-50 text-teal-700 border-l-4 border-teal-600 pl-1.5"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                          }`
+                        }
+                      >
+                        <SubIcon className="h-5 w-5 shrink-0" strokeWidth={1.75} />
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              )}
             </nav>
 
             <div className="border-t border-slate-200 p-3">

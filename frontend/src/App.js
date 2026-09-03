@@ -9,6 +9,9 @@ import SubmitContract from "@/pages/SubmitContract";
 import UsersPage from "@/pages/UsersPage";
 import Analytics from "@/pages/Analytics";
 import DualReview from "@/pages/DualReview";
+import RBACRoles from "@/pages/rbac/RBACRoles";
+import RBACMatrix from "@/pages/rbac/RBACMatrix";
+import RBACCatalog from "@/pages/rbac/RBACCatalog";
 
 function Protected({ children, roles }) {
   const { user, loading } = useAuth();
@@ -33,6 +36,10 @@ function App() {
             <Route path="/review/:id" element={<Protected><DualReview /></Protected>} />
             <Route path="/submit" element={<Protected roles={["admin","business_unit"]}><SubmitContract /></Protected>} />
             <Route path="/users" element={<Protected roles={["admin"]}><UsersPage /></Protected>} />
+            <Route path="/rbac" element={<Navigate to="/rbac/roles" replace />} />
+            <Route path="/rbac/roles" element={<Protected roles={["admin","management"]}><RBACRoles /></Protected>} />
+            <Route path="/rbac/matrix" element={<Protected roles={["admin","management"]}><RBACMatrix /></Protected>} />
+            <Route path="/rbac/catalog" element={<Protected roles={["admin","management"]}><RBACCatalog /></Protected>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AuthProvider>
