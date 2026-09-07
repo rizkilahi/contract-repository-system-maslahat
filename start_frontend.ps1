@@ -1,3 +1,6 @@
+# Ensure Node.js and yarn paths are in PATH
+$env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;" + $env:Path
+
 Write-Host "Waiting for any package installation to finish..."
 while (Get-Process -Name "npm", "yarn" -ErrorAction SilentlyContinue) {
     Start-Sleep -Seconds 2

@@ -236,7 +236,7 @@ export default function RBACCatalog() {
         p.endpoint.toLowerCase().includes(search.toLowerCase());
       return matchRisk && matchRole && matchSearch;
     });
-  }, [search, selectedRisk, selectedRole]);
+  }, [permissions, search, selectedRisk, selectedRole]);
 
   const copySlug = (slug) => {
     navigator.clipboard.writeText(slug);

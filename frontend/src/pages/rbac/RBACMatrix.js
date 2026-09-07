@@ -242,7 +242,7 @@ export default function RBACMatrix() {
         item.categoryLabel.toLowerCase().includes(search.toLowerCase());
       return matchCat && matchSearch;
     });
-  }, [search, selectedCategory]);
+  }, [matrixData, search, selectedCategory]);
 
   const renderStatus = (val) => {
     if (val.allowed === true) {
