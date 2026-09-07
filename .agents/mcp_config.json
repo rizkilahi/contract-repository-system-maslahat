@@ -7,30 +7,6 @@
         "@playwright/mcp@latest"
       ]
     },
-    "supabase": {
-      "command": "npx.cmd",
-      "args": [
-        "-y",
-        "supabase-mcp"
-      ],
-      "env": {
-        "SUPABASE_ACCESS_TOKEN": "YOUR_SUPABASE_TOKEN_HERE"
-      }
-    },
-    "strix": {
-      "command": "npx.cmd",
-      "args": [
-        "-y",
-        "@strixgov/mcp-proxy"
-      ]
-    },
-    "skill-ui": {
-      "command": "npx.cmd",
-      "args": [
-        "-y",
-        "skill-ui-mcp"
-      ]
-    },
     "context7": {
       "command": "npx.cmd",
       "args": [
