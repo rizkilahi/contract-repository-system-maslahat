@@ -27,7 +27,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True) # Load variables from .env into os.environ
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Response, Query, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Response, Query, Header, Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -1851,6 +1851,51 @@ async def get_security_policy(user: dict = Depends(get_current_user)):
         "allowed_transitions": {r: sorted([f"{a}→{b}" for a, b in t]) for r, t in ALLOWED_TRANSITIONS.items()},
         "no_delete_prefixes": list(BLOCK_DELETE_PREFIXES),
     }
+
+# ---------- Admin RBAC Management API ----------
+@app.get("/api/admin/rbac", tags=["Admin"])
+async def get_rbac_settings(user: dict = Depends(require_roles("admin", "management"))):
+    """Ambil pengaturan kustom RBAC dari database atau null jika memakai standar bawaan."""
+    doc = await db.rbac_settings.find_one({"key": "main"}, {"_id": 0})
+    if not doc:
+        return {"data": None}
+    return {"data": doc.get("settings")}
+
+@app.put("/api/admin/rbac", tags=["Admin"])
+async def save_rbac_settings(payload: dict = Body(...), user: dict = Depends(require_roles("admin"))):
+    """Simpan perubahan konfigurasi RBAC (Role, Matriks Hak Akses, Katalog) dan catat jejak audit."""
+    doc = {
+        "key": "main",
+        "settings": payload,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": user.get("email"),
+    }
+    await db.rbac_settings.update_one({"key": "main"}, {"$set": doc}, upsert=True)
+    await db.system_audit.insert_one({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "user_email": user.get("email"),
+        "role": user.get("role"),
+        "action": "RBAC_SETTINGS_UPDATED",
+        "detail": f"Super admin ({user.get('email')}) memperbarui matriks dan konfigurasi wewenang RBAC",
+        "resource": "rbac_settings",
+        "status": 200,
+    })
+    return {"status": "success", "message": "Konfigurasi wewenang RBAC berhasil disimpan secara permanen."}
+
+@app.post("/api/admin/rbac/reset", tags=["Admin"])
+async def reset_rbac_settings(user: dict = Depends(require_roles("admin"))):
+    """Kembalikan konfigurasi RBAC ke baseline standar BRD BSI Maslahat."""
+    await db.rbac_settings.delete_many({"key": "main"})
+    await db.system_audit.insert_one({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "user_email": user.get("email"),
+        "role": user.get("role"),
+        "action": "RBAC_SETTINGS_RESET",
+        "detail": f"Super admin ({user.get('email')}) mereset pengaturan RBAC ke konfigurasi standar",
+        "resource": "rbac_settings",
+        "status": 200,
+    })
+    return {"status": "success", "message": "Konfigurasi RBAC berhasil dikembalikan ke standar awal."}
 
 app.add_middleware(
     CORSMiddleware,

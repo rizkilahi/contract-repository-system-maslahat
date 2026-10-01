@@ -51,6 +51,7 @@ frontend/playwright-report/
 frontend/test-results/
 frontend/tests/*.png
 frontend/tests/evidence-*.png
+.playwright-mcp/
 
 # Production builds & Caches
 frontend/build/

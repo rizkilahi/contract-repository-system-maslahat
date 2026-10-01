@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth, ROLE_LABEL } from "@/context/AuthContext";
 import {
   LayoutDashboard, FileText, FilePlus2, Users, LogOut,
@@ -15,6 +15,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { useRBAC } from "@/context/RBACContext";
 
 const NAV = [
   { to: "/", label: "Dasbor Utama", icon: LayoutDashboard, roles: ["admin","business_unit","legal_officer","management"] },
@@ -25,16 +26,18 @@ const NAV = [
 ];
 
 const RBAC_NAV = [
-  { to: "/rbac/roles", label: "Role & Akses", icon: Shield },
-  { to: "/rbac/matrix", label: "Perbandingan Akses", icon: LayoutGrid },
-  { to: "/rbac/catalog", label: "Katalog Akses", icon: SlidersHorizontal },
+  { to: "/rbac", alias: ["/rbac", "/rbac/roles"], label: "Role & Akses", icon: Shield },
+  { to: "/rbac/banding", alias: ["/rbac/banding", "/rbac/matrix"], label: "Perbandingan Akses", icon: LayoutGrid },
+  { to: "/rbac/katalog", alias: ["/rbac/katalog", "/rbac/catalog"], label: "Katalog Akses", icon: SlidersHorizontal },
 ];
 
 export default function AppShell({ children }) {
   const [collapsed, setCollapsed] = useState(false);
   const [rbacOpen, setRbacOpen] = useState(true);
   const { user, logout } = useAuth();
+  const { hasRBACMenuAccess } = useRBAC();
   const nav = useNavigate();
+  const location = useLocation();
 
   const initials = (user?.name || "?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
 
@@ -117,8 +120,8 @@ export default function AppShell({ children }) {
                 );
               })}
 
-              {/* RBAC Menu Group for Admin & Management */}
-              {["admin", "management"].includes(user?.role) && !collapsed && (
+              {/* RBAC Menu Group configured per role */}
+              {hasRBACMenuAccess(user) && !collapsed && (
                 <div className="pt-2 border-t border-slate-200/80 my-2">
                   <button
                     type="button"
@@ -133,20 +136,19 @@ export default function AppShell({ children }) {
                     <div className="mt-1 space-y-1">
                       {RBAC_NAV.map((sub) => {
                         const SubIcon = sub.icon;
+                        const isSubActive = location.pathname === sub.to || sub.alias?.includes(location.pathname);
                         return (
                           <NavLink
                             key={sub.to}
                             to={sub.to}
                             data-testid={`nav-rbac-${sub.to.split("/").pop()}`}
-                            className={({ isActive }) =>
-                              `group flex items-center gap-3 rounded-lg px-3 py-2 text-xs md:text-sm font-medium transition-colors ${
-                                isActive
-                                  ? "bg-teal-50 text-teal-700 font-semibold border-l-4 border-teal-600 pl-2"
-                                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                              }`
-                            }
+                            className={`group flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs md:text-sm font-medium transition-all ${
+                              isSubActive
+                                ? "bg-[#008A85] text-white font-medium shadow-sm"
+                                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                            }`}
                           >
-                            <SubIcon className="h-4 w-4 shrink-0 text-slate-500 group-hover:text-teal-700" strokeWidth={1.75} />
+                            <SubIcon className={`h-4 w-4 shrink-0 ${isSubActive ? "text-white" : "text-slate-500 group-hover:text-slate-700"}`} strokeWidth={1.75} />
                             <span className="truncate">{sub.label}</span>
                           </NavLink>
                         );
@@ -156,25 +158,24 @@ export default function AppShell({ children }) {
                 </div>
               )}
 
-              {["admin", "management"].includes(user?.role) && collapsed && (
+              {hasRBACMenuAccess(user) && collapsed && (
                 <div className="pt-2 border-t border-slate-200/80 my-2 space-y-1">
                   {RBAC_NAV.map((sub) => {
                     const SubIcon = sub.icon;
+                    const isSubActive = location.pathname === sub.to || sub.alias?.includes(location.pathname);
                     return (
                       <NavLink
                         key={sub.to}
                         to={sub.to}
                         title={sub.label}
                         data-testid={`nav-rbac-${sub.to.split("/").pop()}`}
-                        className={({ isActive }) =>
-                          `group flex items-center justify-center rounded-lg p-2.5 text-sm transition-colors ${
-                            isActive
-                              ? "bg-teal-50 text-teal-700 border-l-4 border-teal-600 pl-1.5"
-                              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                          }`
-                        }
+                        className={`group flex items-center justify-center rounded-lg p-2.5 text-sm transition-all ${
+                          isSubActive
+                            ? "bg-[#008A85] text-white shadow-sm"
+                            : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                        }`}
                       >
-                        <SubIcon className="h-5 w-5 shrink-0" strokeWidth={1.75} />
+                        <SubIcon className={`h-5 w-5 shrink-0 ${isSubActive ? "text-white" : "text-slate-500 group-hover:text-slate-700"}`} strokeWidth={1.75} />
                       </NavLink>
                     );
                   })}
